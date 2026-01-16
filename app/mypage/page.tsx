@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/components/AuthProvider";
-import { db } from "@/lib/firebase";
+import { getDbClient } from "@/lib/firebase";
 import { doc, onSnapshot } from "firebase/firestore";
 import NavieBg from "@/components/NavieBg";
 import NavieButton from "@/components/NavieButton";
@@ -24,6 +24,7 @@ function cx(...classes: Array<string | false | null | undefined>) {
 export default function MyPage() {
   const router = useRouter();
   const { user, userData, loading, logout } = useAuth();
+  const db = useMemo(() => getDbClient(), []);
 
   const [profile, setProfile] = useState<ProfileDoc | null>(null);
   const [profileLoading, setProfileLoading] = useState(true);
@@ -59,8 +60,9 @@ export default function MyPage() {
   }, [user, userData, loading, router]);
 
   // profiles コレクション購読（アイコン & 自己紹介のみ）
-  useEffect(() => {
-    if (!user) return;
+    useEffect(() => {
+    if (!user || !db) return;
+
     const ref = doc(db, "profiles", user.uid);
     const unsub = onSnapshot(
       ref,
@@ -70,8 +72,10 @@ export default function MyPage() {
       },
       () => setProfileLoading(false)
     );
+
     return () => unsub();
-  }, [user]);
+  }, [user, db]);
+
 
   const extra: any = userData ?? {};
 
@@ -115,7 +119,7 @@ export default function MyPage() {
     return age >= 0 && age <= 100 ? `${age}歳` : undefined;
   }, [extra.birthDate]);
 
-  const isLoadingAll = loading || profileLoading || !userData;
+  const isLoadingAll = loading || profileLoading || !user || !userData;
 
   // 希望条件のどれか1つでも入っているか
   const hasPreference =

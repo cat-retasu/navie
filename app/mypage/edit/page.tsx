@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/components/AuthProvider";
-import { db, storage } from "@/lib/firebase";
+import { getDbClient, getStorageClient } from "@/lib/firebase";
 import { doc, onSnapshot, updateDoc, serverTimestamp, setDoc } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import NavieBg from "@/components/NavieBg";
@@ -20,6 +20,8 @@ type ExperienceLevel = "none" | "cabaret" | "girls_bar" | "lounge" | "club" | "o
 export default function MyPageEditPage() {
   const router = useRouter();
   const { user, userData, loading } = useAuth();
+  const db = useMemo(() => getDbClient(), []);
+  const storage = useMemo(() => getStorageClient(), []);
 
   // --- プロフィール（users/profilesから同期してフォームに落とす） ---
   const [nickname, setNickname] = useState("");
@@ -78,7 +80,7 @@ export default function MyPageEditPage() {
 
   // users/{uid} を購読してフォーム初期化（userData のソース）
   useEffect(() => {
-    if (!user) return;
+    if (!user || !db) return;
 
     const refUser = doc(db, "users", user.uid);
     const unsub = onSnapshot(
@@ -133,11 +135,11 @@ export default function MyPageEditPage() {
     );
 
     return () => unsub();
-  }, [user]);
+  }, [user, db]);
 
   // profiles/{uid} を購読（iconUrl など表示用）
   useEffect(() => {
-    if (!user) return;
+    if (!user || !db) return;
 
     const refProfile = doc(db, "profiles", user.uid);
     const unsub = onSnapshot(
@@ -152,7 +154,7 @@ export default function MyPageEditPage() {
     );
 
     return () => unsub();
-  }, [user]);
+  }, [user, db]);
 
   const normalizePhone = (v: string) => v.replace(/[^\d]/g, "");
 
@@ -165,7 +167,7 @@ export default function MyPageEditPage() {
 
   // 写真変更（Storageに上書き→profiles.iconUrl更新）
   const updateIcon = async (file: File | null) => {
-    if (!user || !file) return;
+    if (!user || !file || !db || !storage) return;
 
     setError(null);
     setSavingIcon(true);
@@ -201,7 +203,7 @@ export default function MyPageEditPage() {
 
   // 保存：users と profiles 両方に反映
   const onSave = async () => {
-    if (!user) return;
+    if (!user || !db) return;
     setError(null);
 
     if (preferredJobType === "other" && !preferredJobTypeOther.trim()) {

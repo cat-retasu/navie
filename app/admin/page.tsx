@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/AuthProvider";
-import { db } from "@/lib/firebase";
+import { getDbClient } from "@/lib/firebase";
 import {
   collection,
   getDocs,
@@ -111,6 +111,7 @@ function StatCard({
 export default function AdminDashboardPage() {
   const router = useRouter();
   const { user, userData, loading } = useAuth();
+  const db = useMemo(() => getDbClient(), []);
 
   // ✅ layout から “全体の未読総数” をもらう（ここでは再集計しない）
   const { unreadTotal } = useAdminUnread();
@@ -137,153 +138,151 @@ export default function AdminDashboardPage() {
 
   // ✅ ① 承認待ち数 / 登録ユーザー数（Count）:contentReference[oaicite:6]{index=6}
   useEffect(() => {
-    if (!user || userData?.role !== "admin") return;
+  if (!db) return; // ✅ build/SSR中は何もしない
+  if (!user || userData?.role !== "admin") return;
 
-    let cancelled = false;
+  let cancelled = false;
 
-    (async () => {
-      try {
-        const usersRef = collection(db, "users");
+  (async () => {
+    try {
+      const usersRef = collection(db, "users");
 
-        // 全ユーザー数
-        const totalSnap = await getCountFromServer(usersRef);
-        if (!cancelled) setUserCount(totalSnap.data().count);
+      const totalSnap = await getCountFromServer(usersRef);
+      if (!cancelled) setUserCount(totalSnap.data().count);
 
-        // 承認待ち数
-        const qPending = query(usersRef, where("role", "==", "pending"));
-        const pendingSnap = await getCountFromServer(qPending);
-        if (!cancelled) setPendingCount(pendingSnap.data().count);
-      } catch (e: any) {
-        console.error(e);
-        if (!cancelled) {
-          setError("集計の取得に失敗しました（権限/インデックスを確認）");
-        }
+      const qPending = query(usersRef, where("role", "==", "pending"));
+      const pendingSnap = await getCountFromServer(qPending);
+      if (!cancelled) setPendingCount(pendingSnap.data().count);
+    } catch (e: any) {
+      console.error(e);
+      if (!cancelled) {
+        setError("集計の取得に失敗しました（権限/インデックスを確認）");
       }
-    })();
+    }
+  })();
 
-    return () => {
-      cancelled = true;
-    };
-  }, [user, userData]);
+  return () => {
+    cancelled = true;
+  };
+}, [db, user, userData?.role]);
 
   // ✅ ② 最新の承認待ち5件（リアルタイム）:contentReference[oaicite:7]{index=7}
   useEffect(() => {
-    if (!user || userData?.role !== "admin") return;
+  if (!db) {
+    setInitialLoading(false);
+    return;
+  }
+  if (!user || userData?.role !== "admin") return;
 
-    const usersRef = collection(db, "users");
-    const qLatestPending = query(
-      usersRef,
-      where("role", "==", "pending"),
-      orderBy("createdAt", "desc"),
-      limit(5)
-    );
+  const usersRef = collection(db, "users");
+  const qLatestPending = query(
+    usersRef,
+    where("role", "==", "pending"),
+    orderBy("createdAt", "desc"),
+    limit(5)
+  );
 
-    const unsub = onSnapshot(
-      qLatestPending,
-      (snap) => {
-        const list: PendingUser[] = snap.docs.map((d) => {
-          const data = d.data() as any;
-          const ts = data.createdAt as Timestamp | undefined;
-          const createdAt = ts?.toDate ? ts.toDate() : null;
+  const unsub = onSnapshot(
+    qLatestPending,
+    (snap) => {
+      const list: PendingUser[] = snap.docs.map((d) => {
+        const data = d.data() as any;
+        const ts = data.createdAt as Timestamp | undefined;
+        const createdAt = ts?.toDate ? ts.toDate() : null;
 
-          return {
-            id: d.id,
-            email: data.email ?? "",
-            nickname: data.nickname ?? "",
-            createdAt,
-            preferredJobType: data.preferredJobType ?? "",
-            preferredShift: data.preferredShift ?? "",
-            preferredHourlyWage: data.preferredHourlyWage ?? "",
-            experienceLevel: data.experienceLevel ?? "",
-          };
-        });
-        setPendingLatest(list);
-        setInitialLoading(false);
-      },
-      (err) => {
-        console.error(err);
-        setError("承認待ちユーザーの取得に失敗しました");
-        setInitialLoading(false);
-      }
-    );
+        return {
+          id: d.id,
+          email: data.email ?? "",
+          nickname: data.nickname ?? "",
+          createdAt,
+          preferredJobType: data.preferredJobType ?? "",
+          preferredShift: data.preferredShift ?? "",
+          preferredHourlyWage: data.preferredHourlyWage ?? "",
+          experienceLevel: data.experienceLevel ?? "",
+        };
+      });
+      setPendingLatest(list);
+      setInitialLoading(false);
+    },
+    (err) => {
+      console.error(err);
+      setError("承認待ちユーザーの取得に失敗しました");
+      setInitialLoading(false);
+    }
+  );
 
-    return () => unsub();
-  }, [user, userData]);
+  return () => unsub();
+}, [db, user, userData?.role]);
 
   // ✅ ③ 最新チャット5件 + “各ルーム未読”（※総未読は数えない：layout に一本化）
   useEffect(() => {
-    if (!user || userData?.role !== "admin") return;
+  if (!db) return;
+  if (!user || userData?.role !== "admin") return;
 
-    const roomsRef = collection(db, "chatRooms");
-    const qRooms = query(roomsRef, orderBy("updatedAt", "desc"), limit(5));
+  const roomsRef = collection(db, "chatRooms");
+  const qRooms = query(roomsRef, orderBy("updatedAt", "desc"), limit(5));
 
-    const unsub = onSnapshot(
-      qRooms,
-      async (snap) => {
-        try {
-          const rooms: RecentChat[] = [];
+  const unsub = onSnapshot(
+    qRooms,
+    async (snap) => {
+      try {
+        const rooms: RecentChat[] = [];
 
-          for (const d of snap.docs) {
-            const data = d.data() as any;
-            const ts = data.updatedAt as Timestamp | undefined;
-            const updatedAt = ts?.toDate ? ts.toDate() : null;
+        for (const d of snap.docs) {
+          const data = d.data() as any;
+          const ts = data.updatedAt as Timestamp | undefined;
+          const updatedAt = ts?.toDate ? ts.toDate() : null;
 
-            let role: RecentChat["role"] = "user";
-            if (data.userId) {
-              const userSnap = await getDoc(doc(db, "users", data.userId));
-              if (userSnap.exists()) {
-                role = (userSnap.data() as any).role ?? "user";
-              }
+          let role: RecentChat["role"] = "user";
+          if (data.userId) {
+            const userSnap = await getDoc(doc(db, "users", data.userId));
+            if (userSnap.exists()) {
+              role = (userSnap.data() as any).role ?? "user";
             }
-
-            rooms.push({
-              id: d.id,
-              userId: data.userId ?? "",
-              lastMessage: data.lastMessage ?? "",
-              updatedAt,
-              unreadCount: 0,
-              role,
-            });
           }
 
-          // 各ルームの未読（readByAdmin == false）だけ “軽く” 数える
-          const withUnread = await Promise.all(
-            rooms.map(async (r) => {
-              const msgsRef = collection(db, "chatRooms", r.id, "messages");
-              const qUnread = query(
-                msgsRef,
-                where("readByAdmin", "==", false)
-                // 送信側が統一できてるなら追加推奨：
-                // , where("from", "==", "user")
-              );
-
-              let c = 0;
-              try {
-                const cnt = await getCountFromServer(qUnread);
-                c = cnt.data().count;
-              } catch {
-                const s = await getDocs(qUnread);
-                c = s.size;
-              }
-
-              return { ...r, unreadCount: c };
-            })
-          );
-
-          setChatLatest(withUnread);
-        } catch (e) {
-          console.error(e);
-          setError("チャット情報の取得に失敗しました");
+          rooms.push({
+            id: d.id,
+            userId: data.userId ?? "",
+            lastMessage: data.lastMessage ?? "",
+            updatedAt,
+            unreadCount: 0,
+            role,
+          });
         }
-      },
-      (err) => {
-        console.error(err);
-        setError("チャットルームの購読に失敗しました");
-      }
-    );
 
-    return () => unsub();
-  }, [user, userData]);
+        const withUnread = await Promise.all(
+          rooms.map(async (r) => {
+            const msgsRef = collection(db, "chatRooms", r.id, "messages");
+            const qUnread = query(msgsRef, where("readByAdmin", "==", false));
+
+            let c = 0;
+            try {
+              const cnt = await getCountFromServer(qUnread);
+              c = cnt.data().count;
+            } catch {
+              const s = await getDocs(qUnread);
+              c = s.size;
+            }
+
+            return { ...r, unreadCount: c };
+          })
+        );
+
+        setChatLatest(withUnread);
+      } catch (e) {
+        console.error(e);
+        setError("チャット情報の取得に失敗しました");
+      }
+    },
+    (err) => {
+      console.error(err);
+      setError("チャットルームの購読に失敗しました");
+    }
+  );
+
+  return () => unsub();
+}, [db, user, userData?.role]);
 
   const unreadRooms = useMemo(() => {
     return chatLatest.filter((x) => (x.unreadCount ?? 0) > 0).length;

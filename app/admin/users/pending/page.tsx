@@ -2,8 +2,8 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
-import { db } from "@/lib/firebase";
+import { useEffect, useMemo, useState } from "react";
+import { getDbClient } from "@/lib/firebase";
 import {
   collection,
   onSnapshot,
@@ -52,6 +52,7 @@ const formatDateTime = (d?: Date | null) => {
 export default function PendingUsersPage() {
   const { user, userData, loading } = useAuth();
   const router = useRouter();
+  const db = useMemo(() => getDbClient(), []);
 
   const [pendingUsers, setPendingUsers] = useState<PendingUser[]>([]);
   const [selected, setSelected] = useState<PendingUser | null>(null);
@@ -68,54 +69,62 @@ export default function PendingUsersPage() {
   }, [user, userData, loading, router]);
 
   // pendingユーザー一覧をリアルタイム取得
-  useEffect(() => {
-    const usersRef = collection(db, "users");
-    const q = query(
-      usersRef,
-      where("role", "==", "pending"), // ここで role=pending をちゃんと拾う
-      orderBy("createdAt", "desc")
-    );
+  // pendingユーザー一覧をリアルタイム取得
+useEffect(() => {
+  if (!db) {
+    // build/SSR では null になる設計なので、何もしない
+    setInitialLoading(false);
+    return;
+  }
 
-    const unsubscribe = onSnapshot(
-      q,
-      (snap) => {
-        const list: PendingUser[] = snap.docs.map((d) => {
-          const data = d.data() as any;
-          let createdAt: Date | null = null;
-          const ts = data.createdAt as Timestamp | undefined;
-          if (ts?.toDate) createdAt = ts.toDate();
+  const usersRef = collection(db, "users");
+  const q = query(
+    usersRef,
+    where("role", "==", "pending"),
+    orderBy("createdAt", "desc")
+  );
 
-          return {
-            id: d.id,
-            email: data.email ?? "",
-            nickname: data.nickname ?? "",
-            role: data.role ?? "pending",
-            createdAt,
-            area: data.area ?? "",
-            experienceLevel: data.experienceLevel ?? "",
-            experienceYears: data.experienceYears ?? "",
-            experienceShops: data.experienceShops ?? "",
-            averageSales: data.averageSales ?? "",
-            maxSales: data.maxSales ?? "",
-            currentJob: data.currentJob ?? "",
-            residenceStation: data.residenceStation ?? "",
-            preferredShift: data.preferredShift ?? "",
-            preferredJobType: data.preferredJobType ?? "",
-            preferredHourlyWage: data.preferredHourlyWage ?? "",
-          };
-        });
-        setPendingUsers(list);
-        setInitialLoading(false);
-      },
-      (err) => {
-        console.error(err);
-        setError("承認待ちユーザーの取得に失敗しました。");
-        setInitialLoading(false);
-      }
-    );
+  const unsubscribe = onSnapshot(
+    q,
+    (snap) => {
+      const list: PendingUser[] = snap.docs.map((d) => {
+        const data = d.data() as any;
+        let createdAt: Date | null = null;
+        const ts = data.createdAt as Timestamp | undefined;
+        if (ts?.toDate) createdAt = ts.toDate();
 
-    return () => unsubscribe();
-  }, []);
+        return {
+          id: d.id,
+          email: data.email ?? "",
+          nickname: data.nickname ?? "",
+          role: data.role ?? "pending",
+          createdAt,
+          area: data.area ?? "",
+          experienceLevel: data.experienceLevel ?? "",
+          experienceYears: data.experienceYears ?? "",
+          experienceShops: data.experienceShops ?? "",
+          averageSales: data.averageSales ?? "",
+          maxSales: data.maxSales ?? "",
+          currentJob: data.currentJob ?? "",
+          residenceStation: data.residenceStation ?? "",
+          preferredShift: data.preferredShift ?? "",
+          preferredJobType: data.preferredJobType ?? "",
+          preferredHourlyWage: data.preferredHourlyWage ?? "",
+        };
+      });
+
+      setPendingUsers(list);
+      setInitialLoading(false);
+    },
+    (err) => {
+      console.error(err);
+      setError("承認待ちユーザーの取得に失敗しました。");
+      setInitialLoading(false);
+    }
+  );
+
+  return () => unsubscribe();
+}, [db]);
 
   const handleApprove = async (userId: string) => {
   setProcessingId(userId);

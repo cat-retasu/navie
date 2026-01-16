@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/AuthProvider";
-import { db } from "@/lib/firebase";
+import { getDbClient } from "@/lib/firebase";
 import {
   addDoc,
   collection,
@@ -39,6 +39,7 @@ const DEFAULT_WELCOME = `はじめまして！夜ナビ運営です✨
 export default function AdminQuickRepliesPage() {
   const router = useRouter();
   const { user, userData, loading } = useAuth();
+  const db = useMemo(() => getDbClient(), []);
 
   // quickReplies
   const [quickReplies, setQuickReplies] = useState<QuickReply[]>([]);
@@ -63,8 +64,9 @@ export default function AdminQuickRepliesPage() {
   }, [user, userData, loading, router]);
 
   // QuickReplies 購読
-  useEffect(() => {
+    useEffect(() => {
     if (!user || userData?.role !== "admin") return;
+    if (!db) return;
 
     const q = query(collection(db, "quickReplies"), orderBy("order", "asc"));
     const unsub = onSnapshot(
@@ -88,11 +90,12 @@ export default function AdminQuickRepliesPage() {
     );
 
     return () => unsub();
-  }, [user, userData?.role]);
+  }, [user, userData?.role, db]);
 
   // Welcome message 読み込み（無ければ初期作成）
-  useEffect(() => {
+    useEffect(() => {
     if (!user || userData?.role !== "admin") return;
+    if (!db) return;
 
     const ref = doc(db, "settings", "welcomeMessage");
     (async () => {
@@ -129,13 +132,12 @@ export default function AdminQuickRepliesPage() {
         }
       } catch (e) {
         console.error(e);
-        // settings が読めないルールでも落ちないようにフォールバック
         setWelcomeText(DEFAULT_WELCOME);
       } finally {
         setWelcomeLoading(false);
       }
     })();
-  }, [user, userData?.role]);
+  }, [user, userData?.role, db]);
 
   const categories = useMemo(
     () => ["all", ...new Set(quickReplies.map((q) => q.category))],
@@ -149,7 +151,9 @@ export default function AdminQuickRepliesPage() {
   }, [quickReplies, selectedCategory]);
 
   // テンプレ追加
-  const handleAdd = async () => {
+    const handleAdd = async () => {
+    if (!db) return;
+
     if (!category.trim() || !text.trim()) {
       setError("カテゴリとテキストは必須です");
       return;
@@ -172,7 +176,8 @@ export default function AdminQuickRepliesPage() {
   };
 
   // 削除
-  const handleDelete = async (id: string) => {
+    const handleDelete = async (id: string) => {
+    if (!db) return;
     if (!confirm("このテンプレを削除しますか？")) return;
 
     try {
@@ -184,7 +189,9 @@ export default function AdminQuickRepliesPage() {
   };
 
   // order更新
-  const updateOrder = async (id: string, newOrder: number) => {
+    const updateOrder = async (id: string, newOrder: number) => {
+    if (!db) return;
+
     try {
       const ref = doc(db, "quickReplies", id);
       await updateDoc(ref, { order: newOrder });
@@ -195,7 +202,9 @@ export default function AdminQuickRepliesPage() {
   };
 
   // welcome 保存
-  const handleSaveWelcome = async () => {
+    const handleSaveWelcome = async () => {
+    if (!db) return;
+
     try {
       setWelcomeSaving(true);
       const ref = doc(db, "settings", "welcomeMessage");

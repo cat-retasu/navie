@@ -13,7 +13,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/components/AuthProvider";
 import { NightNaviBg } from "@/components/NightNaviBg";
-import { db, storage } from "@/lib/firebase";
+import { getDbClient, getStorageClient } from "@/lib/firebase";
 import {
   addDoc,
   collection,
@@ -91,6 +91,11 @@ export default function AdminChatRoomPage() {
   const params = useParams<{ roomId: string }>();
   const roomId = params.roomId;
 
+    // ✅ Firebase clients（ブラウザでだけ生きる）
+  const db = useMemo(() => getDbClient(), []);
+  const storage = useMemo(() => getStorageClient(), []);
+
+
   const [room, setRoom] = useState<RoomInfo | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loadingRoom, setLoadingRoom] = useState(true);
@@ -125,8 +130,9 @@ export default function AdminChatRoomPage() {
   }, [user, userData, loading, router]);
 
   // ルーム情報取得 + userTyping購読 + 未読リセット :contentReference[oaicite:3]{index=3}
-  useEffect(() => {
+    useEffect(() => {
     if (!roomId) return;
+    if (!db) return;
 
     const roomRef = doc(db, "chatRooms", roomId);
 
@@ -166,11 +172,12 @@ export default function AdminChatRoomPage() {
     });
 
     return () => unsub();
-  }, [roomId]);
+  }, [roomId, db]);
 
   // QuickReplies 購読（/admin/quick-replies と揃え）:contentReference[oaicite:4]{index=4}
-  useEffect(() => {
+    useEffect(() => {
     if (!user || userData?.role !== "admin") return;
+    if (!db) return;
 
     const q = query(collection(db, "quickReplies"), orderBy("order", "asc"));
     const unsub = onSnapshot(
@@ -194,7 +201,7 @@ export default function AdminChatRoomPage() {
     );
 
     return () => unsub();
-  }, [user, userData?.role]);
+  }, [user, userData?.role, db]);
 
   const categories = useMemo(
     () => ["all", ...new Set(quickReplies.map((q) => q.category))],
@@ -208,8 +215,9 @@ export default function AdminChatRoomPage() {
   }, [quickReplies, activeCategory]);
 
   // メッセージ購読
-  useEffect(() => {
+    useEffect(() => {
     if (!roomId) return;
+    if (!db) return;
 
     const msgsRef = collection(db, "chatRooms", roomId, "messages");
     const q = query(msgsRef, orderBy("createdAt", "asc"));
@@ -243,12 +251,13 @@ export default function AdminChatRoomPage() {
     );
 
     return () => unsub();
-  }, [roomId]);
+  }, [roomId, db]);
 
   // 管理画面を開いてる間：ユーザーメッセを既読（readByAdmin=true）に寄せる
-  useEffect(() => {
+    useEffect(() => {
     const markRead = async () => {
       if (!roomId) return;
+      if (!db) return;
 
       const targets = messages.filter((m) => m.from === "user" && !m.readByAdmin);
       if (targets.length === 0) return;
@@ -263,7 +272,8 @@ export default function AdminChatRoomPage() {
     };
 
     if (messages.length > 0) markRead().catch(console.error);
-  }, [messages, roomId]);
+  }, [messages, roomId, db]);
+
 
   // スクロール追従
   useEffect(() => {
@@ -271,14 +281,15 @@ export default function AdminChatRoomPage() {
   }, [messages.length]);
 
   // admin typing 送信（軽い debounce）
-  const pushAdminTyping = async (isTyping: boolean) => {
+    const pushAdminTyping = async (isTyping: boolean) => {
     if (!roomId) return;
+    if (!db) return;
     try {
       await updateDoc(doc(db, "chatRooms", roomId), {
         adminTyping: isTyping,
       });
     } catch {
-      // 権限/通信不安定でも UI を壊さない
+      // ignore
     }
   };
 
@@ -295,9 +306,11 @@ export default function AdminChatRoomPage() {
   };
 
   // 送信（テキスト）
-  const handleSend = async (e: FormEvent) => {
+    const handleSend = async (e: FormEvent) => {
     e.preventDefault();
     if (!room || !roomId) return;
+    if (!db) return;
+
     const text = input.trim();
     if (!text) return;
 
@@ -323,7 +336,6 @@ export default function AdminChatRoomPage() {
         updatedAt: serverTimestamp(),
         adminTyping: false,
         lastSender: "admin",
-        // user 側の未読（必要ならここで増やす設計に拡張OK）
       });
 
       setInput("");
@@ -337,9 +349,10 @@ export default function AdminChatRoomPage() {
   };
 
   // 画像送信（admin）
-  const handleImageSelect = async (e: ChangeEvent<HTMLInputElement>) => {
+    const handleImageSelect = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !room) return;
+    if (!db || !storage) return;
 
     try {
       setUploadingImage(true);
@@ -380,8 +393,9 @@ export default function AdminChatRoomPage() {
   };
 
   // メッセージ削除（admin 自分の送信だけ） :contentReference[oaicite:5]{index=5}
-  const handleDeleteMessage = async (m: ChatMessage) => {
+    const handleDeleteMessage = async (m: ChatMessage) => {
     if (!roomId) return;
+    if (!db) return;
     if (!confirm("このメッセージを削除しますか？")) return;
 
     try {

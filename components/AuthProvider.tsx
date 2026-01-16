@@ -7,6 +7,7 @@ import {
   useEffect,
   useState,
   ReactNode,
+  useMemo,
 } from "react";
 import {
   onAuthStateChanged,
@@ -17,7 +18,7 @@ import {
 } from "firebase/auth";
 import { useRouter, usePathname } from "next/navigation";
 
-import { auth, db } from "@/lib/firebase";
+import { getAuthClient, getDbClient } from "@/lib/firebase";
 import {
   doc,
   getDoc,
@@ -79,9 +80,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [userData, setUserData] = useState<UserData | null>(null);
   const [loading, setLoading] = useState(true);
+  const auth = useMemo(() => getAuthClient(), []);
+  const db = useMemo(() => getDbClient(), []);
+
 
   useEffect(() => {
     let unsubUserDoc: (() => void) | null = null;
+    if (!auth || !db) {
+      setLoading(false);
+      return;
+    }
 
     const unsubAuth = onAuthStateChanged(auth, async (fbUser) => {
       setUser(fbUser);
@@ -186,7 +194,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       unsubAuth();
       if (unsubUserDoc) unsubUserDoc();
     };
-  }, [router, pathname]);
+  }, [router, pathname, auth, db]);
 
   const signup = async (
   email: string,
@@ -194,7 +202,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   extra?: Partial<UserData>,
   avatarFile?: File | null
 ) => {
+  if (!auth) throw new Error("Firebase Auth が初期化できてない（env or browser）");
   setLoading(true);
+
+  try {
+    const cred = await createUserWithEmailAndPassword(auth, email, password);
+    // ...以下そのまま
+  } finally {
+    setLoading(false);
+  }
 
   try {
     const cred = await createUserWithEmailAndPassword(auth, email, password);
@@ -229,26 +245,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 };
 
   const login = async (email: string, password: string) => {
-    setLoading(true);
-    try {
-      await signInWithEmailAndPassword(auth, email, password);
-      // 後続は onAuthStateChanged 側で処理
-    } finally {
-      setLoading(false);
-    }
+    if (!auth) throw new Error("Firebase Auth が初期化できてない（env or browser）");
+  setLoading(true);
+  try {
+    await signInWithEmailAndPassword(auth, email, password);
+  } finally {
+    setLoading(false);
+  }
   };
 
   const logout = async () => {
-    setLoading(true);
-    try {
-      await signOut(auth);
-      setUser(null);
-      setUserData(null);
-      router.replace("/login");
-    } finally {
-      setLoading(false);
-    }
-  };
+  if (!auth) return; // ここは落とさず黙って抜けてもOK
+  setLoading(true);
+  try {
+    await signOut(auth);
+    setUser(null);
+    setUserData(null);
+    router.replace("/login");
+  } finally {
+    setLoading(false);
+  }
+};
 
   return (
     <AuthContext.Provider

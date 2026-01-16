@@ -3,7 +3,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { db } from "@/lib/firebase";
+import { getDbClient } from "@/lib/firebase";
 import {
   collection,
   getDocs,
@@ -36,84 +36,85 @@ export default function AdminChatsPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const load = async () => {
-      try {
-        const qRooms = query(
-          collection(db, "chatRooms"),
-          orderBy("updatedAt", "desc")
-        );
-        const snap = await getDocs(qRooms);
+  const load = async () => {
+    const db = getDbClient();
+    if (!db) {
+      // ブラウザじゃない/初期化されてない時は何もしない（保険）
+      setLoading(false);
+      return;
+    }
 
-        const result: ChatRoomRow[] = [];
+    try {
+      const qRooms = query(
+        collection(db, "chatRooms"),
+        orderBy("updatedAt", "desc")
+      );
+      const snap = await getDocs(qRooms);
 
-        for (const docSnap of snap.docs) {
-          const data = docSnap.data() as any;
-          const roomId = docSnap.id;
-          const userId = data.userId ?? "";
+      const result: ChatRoomRow[] = [];
 
-          // ✅ 未読数（完全移行：chatRooms のフィールドを見るだけ）
-          // ※ フィールドが無い既存ルームは 0 扱いになります（必要なら後述の backfill を1回実行）
-          const unreadCount =
-            typeof data.unreadCountForAdmin === "number"
-              ? data.unreadCountForAdmin
-              : 0;
+      for (const docSnap of snap.docs) {
+        const data = docSnap.data() as any;
+        const roomId = docSnap.id;
+        const userId = data.userId ?? "";
 
-          // プロフィール（表示用）
-          let nickname = "";
-          let photoURL: string | null = null;
-          // ────────────────
-// 🔥 users.role を取得（正）
-// ────────────────
-let role: ChatRoomRow["role"] = "user";
+        const unreadCount =
+          typeof data.unreadCountForAdmin === "number"
+            ? data.unreadCountForAdmin
+            : 0;
 
-if (userId) {
-  const userSnap = await getDoc(doc(db, "users", userId));
-  if (userSnap.exists()) {
-    role = (userSnap.data() as any).role ?? "user";
-  }
-}
+        let nickname = "";
+        let photoURL: string | null = null;
 
-          if (userId) {
-            const profileRef = doc(db, "profiles", userId);
-            const profileSnap = await getDoc(profileRef);
-
-            if (profileSnap.exists()) {
-              const p = profileSnap.data() as any;
-
-              nickname = p.nickname || p.displayName || "(未設定)";
-              photoURL =
-                p.photoURL ||
-                (Array.isArray(p.photoURLs) ? p.photoURLs[0] : null) ||
-                null;
-
-            }
+        // 🔥 users.role を取得
+        let role: ChatRoomRow["role"] = "user";
+        if (userId) {
+          const userSnap = await getDoc(doc(db, "users", userId));
+          if (userSnap.exists()) {
+            role = (userSnap.data() as any).role ?? "user";
           }
-
-          const updatedAt: Timestamp | undefined = data.updatedAt;
-
-          result.push({
-            id: roomId,
-            userId,
-            nickname,
-            photoURL,
-            unreadCount,
-            lastMessage: data.lastMessage ?? "",
-            updatedAt: updatedAt ? updatedAt.toDate().toLocaleString() : "",
-            role,
-            lastSender: data.lastSender ?? "admin",
-          });
         }
 
-        setRooms(result);
-      } catch (e) {
-        console.error(e);
-      } finally {
-        setLoading(false);
-      }
-    };
+        // プロフィール（表示用）
+        if (userId) {
+          const profileRef = doc(db, "profiles", userId);
+          const profileSnap = await getDoc(profileRef);
 
-    load();
-  }, []);
+          if (profileSnap.exists()) {
+            const p = profileSnap.data() as any;
+            nickname = p.nickname || p.displayName || "(未設定)";
+            photoURL =
+              p.photoURL ||
+              (Array.isArray(p.photoURLs) ? p.photoURLs[0] : null) ||
+              null;
+          }
+        }
+
+        const updatedAt: Timestamp | undefined = data.updatedAt;
+
+        result.push({
+          id: roomId,
+          userId,
+          nickname,
+          photoURL,
+          unreadCount,
+          lastMessage: data.lastMessage ?? "",
+          updatedAt: updatedAt ? updatedAt.toDate().toLocaleString() : "",
+          role,
+          lastSender: data.lastSender ?? "admin",
+        });
+      }
+
+      setRooms(result);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  load();
+}, []);
 
   return (
     <div className="relative min-h-[calc(100vh-48px)] px-4 md:px-6 py-6 text-white overflow-hidden">

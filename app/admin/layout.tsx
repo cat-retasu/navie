@@ -10,7 +10,7 @@ import {
   useMemo,
   useState,
 } from "react";
-import { db } from "@/lib/firebase";
+import { getDbClient } from "@/lib/firebase";
 import Link from "next/link";
 import {
   collectionGroup,
@@ -58,7 +58,7 @@ export default function AdminLayout({
   const [checkingRole, setCheckingRole] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
 
-  // ログイン確認 + role チェック（現状の実装を維持）:contentReference[oaicite:2]{index=2}
+  // ✅ ログイン確認 + role チェック
   useEffect(() => {
     if (loading) return;
 
@@ -68,6 +68,14 @@ export default function AdminLayout({
     }
 
     const ensureAdmin = async () => {
+      const db = getDbClient();
+      if (!db) {
+        // SSR/prerender ではここに来ない想定だけど安全策
+        setCheckingRole(false);
+        router.replace("/mypage");
+        return;
+      }
+
       try {
         const ref = doc(db, "users", user.uid);
         const snap = await getDoc(ref);
@@ -93,10 +101,11 @@ export default function AdminLayout({
   }, [user, loading, router]);
 
   // ✅ 未読総数はここだけでリアルタイム監視（admin 確定後だけ）
-  // 既存は from==user を購読して JS 側で readByAdmin を数えてたので、そのまま “安全側” で維持しつつ
-  // 「未読総数の参照先」をここに一本化する。:contentReference[oaicite:3]{index=3}
   useEffect(() => {
     if (!user || !isAdmin) return;
+
+    const db = getDbClient();
+    if (!db) return;
 
     const q = query(collectionGroup(db, "messages"), where("from", "==", "user"));
 
@@ -144,7 +153,6 @@ export default function AdminLayout({
     );
   }
 
-  // 念のため（ここに来るのは稀）
   if (!isAdmin) return null;
 
   return (
@@ -152,7 +160,6 @@ export default function AdminLayout({
       <div className="min-h-screen bg-[#050007] text-white">
         <NightNaviBg variant="admin" />
 
-        {/* ✅ モバイル：メニュー開閉 */}
         <MobileAdminShell
           navItems={navItems}
           pathname={pathname ?? ""}
@@ -216,14 +223,12 @@ function MobileAdminShell({
       {/* ✅ モバイルドロワー */}
       {open && (
         <div className="md:hidden fixed inset-0 z-40">
-          {/* overlay */}
           <button
             type="button"
             aria-label="close"
             onClick={() => setOpen(false)}
             className="absolute inset-0 bg-black/60"
           />
-          {/* drawer */}
           <div className="absolute left-0 top-0 h-full w-[84%] max-w-[320px] border-r border-white/10 bg-[#050007]/92 backdrop-blur-xl">
             <div className="px-5 pt-6 pb-4 border-b border-white/10">
               <p className="text-[11px] tracking-[0.28em] text-pink-300/80">
@@ -288,9 +293,7 @@ function MobileAdminShell({
         </div>
       )}
 
-      {/* ✅ 本体：md以上は「サイドバー + メイン」、スマホは「メインだけ」 */}
       <div className="min-h-screen flex flex-col md:flex-row">
-        {/* サイドバー（md以上） */}
         <aside className="hidden md:flex w-[260px] flex-col border-r border-white/10 bg-white/[0.03] backdrop-blur-xl">
           <div className="px-5 pt-6 pb-4 border-b border-white/10">
             <p className="text-[11px] tracking-[0.28em] text-pink-300/80">
@@ -340,7 +343,6 @@ function MobileAdminShell({
           </div>
         </aside>
 
-        {/* ✅ メイン：スマホはトップバー分の余白を確保 */}
         <main className="flex-1 min-w-0 pt-0 md:pt-0">
           <div className="md:hidden h-0" />
           {children}

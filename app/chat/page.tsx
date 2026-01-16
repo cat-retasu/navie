@@ -1,10 +1,10 @@
 // app/chat/page.tsx
 "use client";
 
-import { FormEvent, useEffect, useRef, useState, ChangeEvent } from "react";
+import { FormEvent, useEffect, useRef, useState, ChangeEvent, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/AuthProvider";
-import { db, storage } from "@/lib/firebase";
+import { getDbClient, getStorageClient } from "@/lib/firebase";
 import {
   addDoc,
   collection,
@@ -45,8 +45,12 @@ type RoomInfo = {
 };
 
 // ✅ 既存ルームがあれば取得、なければ作成して RoomInfo を返す
-async function getOrCreateRoom(userId: string): Promise<RoomInfo> {
-  const q = query(collection(db, "chatRooms"), where("userId", "==", userId), limit(1));
+async function getOrCreateRoom(db: any, userId: string): Promise<RoomInfo> {
+  const q = query(
+    collection(db, "chatRooms"),
+    where("userId", "==", userId),
+    limit(1)
+  );
   const snap = await getDocs(q);
 
   if (!snap.empty) {
@@ -100,6 +104,8 @@ const formatTime = (d?: Date | null) => {
 
 export default function UserChatPage() {
   const router = useRouter();
+  const db = useMemo(() => getDbClient(), []);
+  const storage = useMemo(() => getStorageClient(), []);
   const { user, userData, loading } = useAuth();
 
   const [room, setRoom] = useState<RoomInfo | null>(null);
@@ -144,13 +150,14 @@ export default function UserChatPage() {
   }, [user, userData, loading, router]);
 
   // ✅ ルーム取得 or 作成（ここ1箇所だけ）
-  useEffect(() => {
+    useEffect(() => {
     if (!user) return;
+    if (!db) return;
 
     (async () => {
       setLoadingRoom(true);
       try {
-        const r = await getOrCreateRoom(user.uid);
+        const r = await getOrCreateRoom(db, user.uid);
         setRoom(r);
       } catch (e) {
         console.error(e);
@@ -159,7 +166,7 @@ export default function UserChatPage() {
         setLoadingRoom(false);
       }
     })();
-  }, [user]);
+  }, [user, db]);
 
   // typingTimeout のクリーンアップ
   useEffect(() => {
@@ -169,8 +176,10 @@ export default function UserChatPage() {
   }, []);
 
   // ルーム情報（adminTypingなど）の購読
-  useEffect(() => {
+    useEffect(() => {
     if (!room) return;
+    if (!db) return;
+
     const roomRef = doc(db, "chatRooms", room.id);
 
     const unsub = onSnapshot(roomRef, (snap) => {
@@ -180,11 +189,12 @@ export default function UserChatPage() {
     });
 
     return () => unsub();
-  }, [room]);
+  }, [room, db]);
 
   // メッセージ購読
-  useEffect(() => {
+    useEffect(() => {
     if (!room) return;
+    if (!db) return;
 
     const msgsRef = collection(db, "chatRooms", room.id, "messages");
     const q = query(msgsRef, orderBy("createdAt", "asc"));
@@ -222,12 +232,14 @@ export default function UserChatPage() {
     );
 
     return () => unsub();
-  }, [room]);
+  }, [room, db]);
 
   // admin → user メッセージを既読にする
-  useEffect(() => {
+    useEffect(() => {
     const markRead = async () => {
       if (!room) return;
+      if (!db) return;
+
       const targets = messages.filter((m) => m.from === "admin" && !m.readByUser && !m.isDeleted);
       if (!targets.length) return;
 
@@ -243,7 +255,7 @@ export default function UserChatPage() {
     };
 
     if (messages.length > 0) markRead();
-  }, [messages, room]);
+  }, [messages, room, db]);
 
   // 自動スクロール
   useEffect(() => {
@@ -251,8 +263,9 @@ export default function UserChatPage() {
   }, [messages.length]);
 
   // userTyping 更新
-  const setUserTyping = async (typing: boolean) => {
+    const setUserTyping = async (typing: boolean) => {
     if (!room) return;
+    if (!db) return;
     try {
       const roomRef = doc(db, "chatRooms", room.id);
       await updateDoc(roomRef, { userTyping: typing });
@@ -271,9 +284,10 @@ export default function UserChatPage() {
   };
 
   // テキスト送信
-  const handleSend = async (e: FormEvent) => {
+    const handleSend = async (e: FormEvent) => {
     e.preventDefault();
     if (!room) return;
+    if (!db) return;
 
     const text = input.trim();
     if (!text) return;
@@ -314,9 +328,10 @@ export default function UserChatPage() {
   };
 
   // 画像送信
-  const handleImageSelect = async (e: ChangeEvent<HTMLInputElement>) => {
+    const handleImageSelect = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !room) return;
+    if (!db || !storage) return;
 
     try {
       setUploadingImage(true);

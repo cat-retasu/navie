@@ -1,6 +1,7 @@
 // lib/setUserRole.ts
+"use client";
 
-import { db } from "@/lib/firebase";
+import { getDbClient } from "@/lib/firebase";
 import { doc, writeBatch, serverTimestamp } from "firebase/firestore";
 
 export type UserRole = "pending" | "user" | "rejected" | "admin" | "suspended";
@@ -22,6 +23,9 @@ const roleToStatus = (role: UserRole): ProfileStatus => {
 };
 
 export async function setUserRole(userId: string, role: UserRole) {
+  const db = getDbClient();
+  if (!db) throw new Error("Firestore is not initialized (client only).");
+
   const status = roleToStatus(role);
 
   const batch = writeBatch(db);

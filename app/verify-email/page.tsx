@@ -1,12 +1,11 @@
 // app/verify-email/page.tsx
-
 "use client";
 
-import { useEffect, useState } from "react";
-import { auth } from "@/lib/firebase";
+import { useEffect, useMemo, useState } from "react";
+import { getAuthClient, getFunctionsClient } from "@/lib/firebase";
 import { signOut } from "firebase/auth";
 import { useRouter } from "next/navigation";
-import { getFunctions, httpsCallable } from "firebase/functions";
+import { httpsCallable } from "firebase/functions";
 
 export default function VerifyEmailSentPage() {
   const router = useRouter();
@@ -14,19 +13,31 @@ export default function VerifyEmailSentPage() {
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
 
+  // ✅ クライアントでだけ有効な Firebase
+  const auth = useMemo(() => getAuthClient(), []);
+  const functions = useMemo(() => getFunctionsClient("asia-northeast1"), []);
+
   useEffect(() => {
-    setEmail(auth.currentUser?.email ?? "");
-  }, []);
+    setEmail(auth?.currentUser?.email ?? "");
+  }, [auth]);
 
   const resend = async () => {
-    const u = auth.currentUser;
-    if (!u) return;
+    const u = auth?.currentUser;
+    if (!u) {
+      setMsg("ログイン情報が見つかりません。いったんログインし直してね。");
+      return;
+    }
+
+    if (!functions) {
+      setMsg("通信の初期化に失敗しました。ページを再読み込みしてね。");
+      return;
+    }
 
     setBusy(true);
     setMsg("");
     try {
-      const functions = getFunctions(undefined, "asia-northeast1");
       const fn = httpsCallable(functions, "sendVerificationEmail");
+      // nickname を送りたいならここで付けられる
       await fn({});
 
       setMsg("認証メールを再送しました。受信箱（迷惑メールも）を確認してね。");
@@ -42,6 +53,11 @@ export default function VerifyEmailSentPage() {
   };
 
   const doLogout = async () => {
+    if (!auth) {
+      router.replace("/login");
+      return;
+    }
+
     setBusy(true);
     try {
       await signOut(auth);

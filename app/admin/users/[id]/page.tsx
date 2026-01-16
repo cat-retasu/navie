@@ -1,9 +1,9 @@
 // app/admin/users/[id]/page.tsx
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { db } from "@/lib/firebase";
+import { getDbClient } from "@/lib/firebase";
 import { useAuth } from "@/components/AuthProvider";
 import {
   doc,
@@ -66,6 +66,7 @@ export default function AdminUserDetailPage() {
   const userId = params.id as string;
 
   const { user, userData, loading } = useAuth();
+  const db = useMemo(() => getDbClient(), []);
 
   const [userDoc, setUserDoc] = useState<UserDoc | null>(null);
   const [profile, setProfile] = useState<ProfileDoc | null>(null);
@@ -91,13 +92,16 @@ export default function AdminUserDetailPage() {
   }, [user, userData, loading, router]);
 
   // データ取得（users + profiles をマージ） :contentReference[oaicite:2]{index=2}
-  useEffect(() => {
+    useEffect(() => {
+    if (!userId) return;
+    if (!db) return;
+
     const fetchAll = async () => {
       try {
         setLoadingAll(true);
         setError(null);
 
-        // ---------- users/{id} 取得 ----------
+        // users/{id}
         const userRef = doc(db, "users", userId);
         const userSnap = await getDoc(userRef);
 
@@ -134,16 +138,12 @@ export default function AdminUserDetailPage() {
             preferredHourlyWage: d.preferredHourlyWage ?? "",
           };
 
-          setUserDoc({
-            email: userEmail,
-            role: userRole,
-            createdAt: userCreatedAt,
-          });
+          setUserDoc({ email: userEmail, role: userRole, createdAt: userCreatedAt });
         } else {
           setUserDoc(null);
         }
 
-        // ---------- profiles/{id} 取得 ----------
+        // profiles/{id}
         const profileRef = doc(db, "profiles", userId);
         const profileSnap = await getDoc(profileRef);
 
@@ -172,9 +172,8 @@ export default function AdminUserDetailPage() {
             : undefined;
         }
 
-        // ---------- users + profiles をマージ ----------
+        // merge
         const merged: ProfileDoc = {
-          // users 由来
           nickname: userBaseProfile.nickname ?? "",
           birthDate: userBaseProfile.birthDate ?? "",
           area: userBaseProfile.area ?? "",
@@ -193,7 +192,6 @@ export default function AdminUserDetailPage() {
           preferredJobType: userBaseProfile.preferredJobType ?? "",
           preferredHourlyWage: userBaseProfile.preferredHourlyWage ?? "",
 
-          // profiles 由来
           iconUrl: profileData.iconUrl ?? (profileData.photoURL || null) ?? null,
           selfIntro: profileData.selfIntro ?? profileData.introduction ?? "",
           status: profileData.status ?? "pending",
@@ -204,7 +202,7 @@ export default function AdminUserDetailPage() {
 
         setProfile(merged);
 
-        // ---------- chatRooms: userId 紐付けの部屋 ----------
+        // chatRooms
         const roomsRef = collection(db, "chatRooms");
         const qRooms = query(roomsRef, where("userId", "==", userId));
         const roomsSnap = await getDocs(qRooms);
@@ -212,10 +210,7 @@ export default function AdminUserDetailPage() {
         if (!roomsSnap.empty) {
           const docSnap = roomsSnap.docs[0];
           const d = docSnap.data() as any;
-          setChatRoom({
-            roomId: docSnap.id,
-            lastMessage: d.lastMessage ?? "",
-          });
+          setChatRoom({ roomId: docSnap.id, lastMessage: d.lastMessage ?? "" });
         } else {
           setChatRoom(null);
         }
@@ -227,8 +222,8 @@ export default function AdminUserDetailPage() {
       }
     };
 
-    if (userId) fetchAll();
-  }, [userId]);
+    fetchAll();
+  }, [userId, db]);
 
   const handleApprove = async () => {
     if (!confirm("このユーザーを承認しますか？")) return;
@@ -272,6 +267,7 @@ export default function AdminUserDetailPage() {
 
 
   const handleSaveAdminFields = async () => {
+    if (!db) return;
     if (!profile) return;
 
     try {

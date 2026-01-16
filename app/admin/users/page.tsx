@@ -4,7 +4,7 @@
 
 import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { db } from "@/lib/firebase";
+import { getDbClient } from "@/lib/firebase";
 import { useAuth } from "@/components/AuthProvider";
 import {
   collection,
@@ -71,6 +71,7 @@ const getRoleChip = (role: string) => {
 export default function AdminUsersPage() {
   const { user, userData, loading } = useAuth();
   const router = useRouter();
+  const db = useMemo(() => getDbClient(), []);
 
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -91,43 +92,49 @@ export default function AdminUsersPage() {
 
   // ユーザー一覧取得
   useEffect(() => {
-    const usersRef = collection(db, "users");
-    const q = query(usersRef, orderBy("createdAt", "desc"));
+  if (!db) {
+    setInitialLoading(false);
+    return;
+  }
 
-    const unsub = onSnapshot(
-      q,
-      (snap) => {
-        const list: AdminUser[] = snap.docs.map((d) => {
-          const data = d.data() as any;
-          let createdAt: Date | null = null;
-          const ts = data.createdAt as Timestamp | undefined;
-          if (ts?.toDate) createdAt = ts.toDate();
+  const usersRef = collection(db, "users");
+  const q = query(usersRef, orderBy("createdAt", "desc"));
 
-          return {
-            id: d.id,
-            email: data.email ?? "",
-            nickname: data.nickname ?? "",
-            role: data.role ?? "user",
-            createdAt,
-            area: data.area ?? "",
-            experienceLevel: data.experienceLevel ?? "",
-            preferredShift: data.preferredShift ?? "",
-            preferredJobType: data.preferredJobType ?? "",
-            preferredHourlyWage: data.preferredHourlyWage ?? "",
-          };
-        });
-        setUsers(list);
-        setInitialLoading(false);
-      },
-      (err) => {
-        console.error(err);
-        setError("ユーザー一覧の取得に失敗しました。");
-        setInitialLoading(false);
-      }
-    );
+  const unsub = onSnapshot(
+    q,
+    (snap) => {
+      const list: AdminUser[] = snap.docs.map((d) => {
+        const data = d.data() as any;
+        let createdAt: Date | null = null;
+        const ts = data.createdAt as Timestamp | undefined;
+        if (ts?.toDate) createdAt = ts.toDate();
 
-    return () => unsub();
-  }, []);
+        return {
+          id: d.id,
+          email: data.email ?? "",
+          nickname: data.nickname ?? "",
+          role: data.role ?? "user",
+          createdAt,
+          area: data.area ?? "",
+          experienceLevel: data.experienceLevel ?? "",
+          preferredShift: data.preferredShift ?? "",
+          preferredJobType: data.preferredJobType ?? "",
+          preferredHourlyWage: data.preferredHourlyWage ?? "",
+        };
+      });
+
+      setUsers(list);
+      setInitialLoading(false);
+    },
+    (err) => {
+      console.error(err);
+      setError("ユーザー一覧の取得に失敗しました。");
+      setInitialLoading(false);
+    }
+  );
+
+  return () => unsub();
+}, [db]);
 
   const filteredUsers = useMemo(() => {
     return users.filter((u) => {
