@@ -252,6 +252,11 @@ export default function UserChatPage() {
       } catch (e) {
         console.error("failed to mark readByUser:", e);
       }
+
+      await updateDoc(doc(db, "chatRooms", room.id), {
+  unreadCountForUser: 0,
+});
+
     };
 
     if (messages.length > 0) markRead();

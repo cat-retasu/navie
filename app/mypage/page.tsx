@@ -188,14 +188,13 @@ export default function MyPage() {
                   NAVIÉ
                 </Link>
 
-                <button
-                  type="button"
-                  onClick={handleLogout}
-                  className="rounded-full border border-black/10 bg-white/70 px-4 py-2 text-[12px] font-semibold hover:bg-white transition"
-                  style={{ color: "var(--muted)" }}
-                >
-                  ログアウト
-                </button>
+                <Link
+                href="/dashboard"
+                className="hidden md:inline-flex items-center justify-center rounded-full border border-black/10 bg-white/70 px-4 py-2 text-xs font-semibold hover:bg-white transition"
+                style={{ color: "var(--muted)" }}
+              >
+                戻る
+              </Link>
               </div>
 
               <p className="mt-5 text-[11px] font-semibold tracking-[0.18em]" style={{ color: "var(--pink)" }}>
@@ -406,39 +405,6 @@ export default function MyPage() {
                   )}
                 </>
               )}
-            </section>
-
-            {/* 下：ヘルプ（NAVIÉ仕様のフッターカード） */}
-            <section className="mt-6 nomi-card p-6 md:p-7">
-              <p className="text-[11px] font-semibold tracking-[0.18em]" style={{ color: "var(--pink)" }}>
-                SUPPORT
-              </p>
-
-              <p className="mt-2 text-[13px] leading-relaxed" style={{ color: "var(--muted)" }}>
-                条件の相談や不安なことがあれば、チャットからいつでも連絡できます。
-              </p>
-
-              <div className="mt-5 flex flex-col sm:flex-row gap-3">
-                <NavieButton href="/chat" className="w-full sm:w-auto justify-center">
-                  運営に相談する（チャットへ）
-                </NavieButton>
-
-                <button
-                  type="button"
-                  onClick={handleLogout}
-                  className="w-full sm:w-auto inline-flex items-center justify-center rounded-full h-[52px] px-7 text-[14px] font-semibold transition
-                             border border-[rgba(255,59,122,0.46)] bg-white/90
-                             shadow-[0_10px_30px_rgba(17,17,17,0.07)]
-                             hover:bg-white hover:-translate-y-[1px] active:translate-y-0"
-                  style={{ color: "rgba(255,59,122,1)" }}
-                >
-                  ログアウト
-                </button>
-              </div>
-
-              <p className="mt-3 text-[10px]" style={{ color: "rgba(95,96,107,0.85)" }}>
-                ※ 無理な連絡・強引な提案はありません
-              </p>
             </section>
           </div>
         </div>

@@ -68,7 +68,7 @@ export default function LoginPage() {
       router.replace("/pending");
       return;
     }
-    router.replace("/mypage");
+    router.replace("/dashboard");
   }, [user, userData, loading, router]);
 
   useEffect(() => {

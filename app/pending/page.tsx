@@ -26,10 +26,10 @@ export default function PendingPage() {
       return;
     }
 
-    // 既に承認済みならマイページ or 管理画面へ
+    // 既に承認済みならダッシュボード or 管理画面へ
     if (userData?.role && userData.role !== "pending") {
       if (userData.role === "admin") router.replace("/admin");
-      else router.replace("/mypage");
+      else router.replace("/dashboard");
     }
   }, [user, userData, loading, router]);
 

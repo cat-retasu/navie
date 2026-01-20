@@ -336,6 +336,7 @@ export default function AdminChatRoomPage() {
         updatedAt: serverTimestamp(),
         adminTyping: false,
         lastSender: "admin",
+        unreadCountForUser: increment(1),
       });
 
       setInput("");
@@ -381,6 +382,7 @@ export default function AdminChatRoomPage() {
         updatedAt: serverTimestamp(),
         adminTyping: false,
         lastSender: "admin",
+        unreadCountForUser: increment(1),
       });
 
       e.target.value = "";

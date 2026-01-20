@@ -8,22 +8,35 @@ import { getStorage, type FirebaseStorage } from "firebase/storage";
 import { getFunctions, type Functions } from "firebase/functions";
 
 const firebaseConfig = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY as string | undefined,
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN as string | undefined,
-  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID as string | undefined,
-  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET as string | undefined,
-  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID as string | undefined,
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID as string | undefined,
+  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
+  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
-// ✅ SSR / build(prerender) で絶対に Firebase client SDK を初期化しない
+function missingKeys() {
+  const miss = Object.entries(firebaseConfig)
+    .filter(([, v]) => !v)
+    .map(([k]) => k);
+  return miss;
+}
+
+// ✅ SSR / build で絶対に初期化しない + 不足キーを出す
 function canInitInBrowser() {
-  return typeof window !== "undefined" && !!firebaseConfig.apiKey;
+  if (typeof window === "undefined") return false;
+  const miss = missingKeys();
+  if (miss.length) {
+    console.error("[Firebase] missing env keys:", miss);
+    return false;
+  }
+  return true;
 }
 
 export function getFirebaseAppClient(): FirebaseApp | null {
   if (!canInitInBrowser()) return null;
-  return getApps().length ? getApp() : initializeApp(firebaseConfig);
+  return getApps().length ? getApp() : initializeApp(firebaseConfig as any);
 }
 
 export function getAuthClient(): Auth | null {

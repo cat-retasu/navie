@@ -5,9 +5,9 @@ import {
   createContext,
   useContext,
   useEffect,
+  useMemo,
   useState,
   ReactNode,
-  useMemo,
 } from "react";
 import {
   onAuthStateChanged,
@@ -18,15 +18,24 @@ import {
 } from "firebase/auth";
 import { useRouter, usePathname } from "next/navigation";
 
-import { getAuthClient, getDbClient } from "@/lib/firebase";
+import {
+  getAuthClient,
+  getDbClient,
+  getFunctionsClient,
+  getStorageClient,
+} from "@/lib/firebase";
+
 import {
   doc,
   getDoc,
   onSnapshot,
   serverTimestamp,
   setDoc,
+  updateDoc,
 } from "firebase/firestore";
-import { getFunctions, httpsCallable } from "firebase/functions";
+
+import { httpsCallable } from "firebase/functions";
+import { ref as sref, uploadBytes, getDownloadURL } from "firebase/storage";
 
 type UserData = {
   email: string;
@@ -49,6 +58,13 @@ type UserData = {
   preferredShift?: string;
   preferredJobType?: string;
   preferredHourlyWage?: string;
+
+  // ✅ 追加：アイコン保存
+  avatarUrl?: string;
+  avatarPath?: string;
+
+  // ✅ 追加：pending反映済みフラグ
+  pendingAppliedAt?: any;
 };
 
 type AuthContextValue = {
@@ -73,6 +89,13 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 const PENDING_EXTRA_KEY = "navie_pending_extra";
 const PENDING_AVATAR_KEY = "navie_pending_avatar_dataurl";
 
+function pickExtFromMime(mime: string) {
+  if (mime === "image/png") return "png";
+  if (mime === "image/webp") return "webp";
+  if (mime === "image/jpeg") return "jpg";
+  return "jpg";
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -80,12 +103,149 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [userData, setUserData] = useState<UserData | null>(null);
   const [loading, setLoading] = useState(true);
+
   const auth = useMemo(() => getAuthClient(), []);
   const db = useMemo(() => getDbClient(), []);
+  const functions = useMemo(() => getFunctionsClient("asia-northeast1"), []);
+  const storage = useMemo(() => getStorageClient(), []);
 
+  const fileToDataUrlResized = async (file: File, max = 512, quality = 0.85) => {
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = () => reject(new Error("image load failed"));
+      i.src = String(r.result);
+    };
+    r.onerror = () => reject(new Error("file read failed"));
+    r.readAsDataURL(file);
+  });
+
+  const scale = Math.min(max / img.width, max / img.height, 1);
+  const w = Math.round(img.width * scale);
+  const h = Math.round(img.height * scale);
+
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("canvas ctx failed");
+  ctx.drawImage(img, 0, 0, w, h);
+
+  return canvas.toDataURL("image/jpeg", quality); // jpeg固定で軽い
+};
+
+  // ✅ 認証後：pending（一時保存）を Firestore/Storage に反映して掃除
+  const applyPendingIfAny = async (uid: string) => {
+  if (!db) return;
+
+  // extra（localStorage）
+  let extra: any = null;
+  try {
+    const raw = localStorage.getItem(PENDING_EXTRA_KEY);
+    extra = raw ? JSON.parse(raw) : null;
+  } catch {}
+
+  // avatar（localStorage）
+  let avatarDataUrl = "";
+  try {
+    avatarDataUrl = localStorage.getItem(PENDING_AVATAR_KEY) ?? "";
+  } catch {}
+
+  // 何も無ければ終了
+  if (!extra && !avatarDataUrl) return;
+
+  const userRef = doc(db, "users", uid);
+  const profileRef = doc(db, "profiles", uid);
+
+  // ✅ extra を users / profiles に保存（成功したら localStorage を消す）
+  if (extra) {
+    try {
+      await updateDoc(userRef, {
+        ...extra,
+        pendingExtraAppliedAt: serverTimestamp(),
+      });
+
+      // ✅ UIが profiles を参照してるなら、最低限ここにも入れる
+      await setDoc(
+        profileRef,
+        {
+          ...extra,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      try {
+        localStorage.removeItem(PENDING_EXTRA_KEY);
+      } catch {}
+    } catch (e) {
+      console.error("updateDoc/setDoc(extra) failed:", e);
+      // 失敗したら消さない（次回また試す）
+    }
+  }
+
+  // ✅ avatar を Storage に保存 → users.avatarUrl + profiles.iconUrl に反映
+  if (avatarDataUrl) {
+    const storageNow = getStorageClient(); // firebase.ts 準拠で都度取得
+    if (!storageNow) {
+      console.error(
+        "[Storage] not initialized. check env NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET"
+      );
+      return;
+    }
+
+    try {
+      const res = await fetch(avatarDataUrl);
+      const blob = await res.blob();
+
+      const ext =
+        blob.type === "image/png"
+          ? "png"
+          : blob.type === "image/webp"
+          ? "webp"
+          : "jpg";
+
+      // ✅ Storage Rules に合わせる: /userProfileImages/{uid}/{fileName}
+      const path = `userProfileImages/${uid}/avatar.${ext}`;
+
+      const storageRef = sref(storageNow, path);
+      await uploadBytes(storageRef, blob, { contentType: blob.type });
+
+      const url = await getDownloadURL(storageRef);
+
+      // ✅ users にも保存（内部用）
+      await updateDoc(userRef, {
+        avatarUrl: url,
+        avatarPath: path,
+        pendingAvatarAppliedAt: serverTimestamp(),
+      });
+
+      // ✅ profiles にも保存（UIが iconUrl を見てるなら必須）
+      await setDoc(
+        profileRef,
+        {
+          iconUrl: url,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      // ✅ 成功した時だけ消す
+      try {
+        localStorage.removeItem(PENDING_AVATAR_KEY);
+      } catch {}
+    } catch (e) {
+      console.error("avatar upload / save failed:", e);
+      // 失敗したら消さない（次回また試す）
+    }
+  }
+};
 
   useEffect(() => {
     let unsubUserDoc: (() => void) | null = null;
+
     if (!auth || !db) {
       setLoading(false);
       return;
@@ -107,18 +267,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      // ✅ 未認証は /verify-email に固定（Firestoreに触らない）
+      // emailVerified の更新を拾うため reload
+      try {
+        await fbUser.reload();
+      } catch (e) {
+        console.error("reload failed:", e);
+      }
+
+      // ✅ 未認証なら /verify-email（Firestoreには触らない）
       if (!fbUser.emailVerified) {
         setUserData(null);
         setLoading(false);
-
-        if (!pathname?.startsWith("/verify-email")) {
-          router.replace("/verify-email");
-        }
+        if (!pathname?.startsWith("/verify-email")) router.replace("/verify-email");
         return;
       }
 
-      // ✅ Rules側 token.email_verified を更新（認証直後は古いことがある）
+      // ✅ 認証済みなら token を強制更新（rules の email_verified を最新化）
       try {
         await fbUser.getIdToken(true);
       } catch (e) {
@@ -130,7 +294,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       const refUser = doc(db, "users", fbUser.uid);
 
-      // users が無ければ最小で作成（認証済みなので通る）
+      // users が無ければ最小で作成
       try {
         const snap = await getDoc(refUser);
         if (!snap.exists()) {
@@ -146,6 +310,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setLoading(false);
         return;
       }
+
+      // ✅ pending反映（毎回呼ぶ：中でキーが無ければ即return）
+try {
+  await applyPendingIfAny(fbUser.uid);
+} catch (e) {
+  console.error("applyPendingIfAny failed:", e);
+}
+
 
       // users をリアルタイム購読
       unsubUserDoc = onSnapshot(
@@ -177,6 +349,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               preferredShift: data.preferredShift,
               preferredJobType: data.preferredJobType,
               preferredHourlyWage: data.preferredHourlyWage,
+
+              avatarUrl: data.avatarUrl,
+              avatarPath: data.avatarPath,
+              pendingAppliedAt: data.pendingAppliedAt,
             });
           }
 
@@ -197,80 +373,66 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [router, pathname, auth, db]);
 
   const signup = async (
-  email: string,
-  password: string,
-  extra?: Partial<UserData>,
-  avatarFile?: File | null
-) => {
-  if (!auth) throw new Error("Firebase Auth が初期化できてない（env or browser）");
-  setLoading(true);
+    email: string,
+    password: string,
+    extra?: Partial<UserData>,
+    avatarFile?: File | null
+  ) => {
+    if (!auth) throw new Error("Firebase Auth が初期化できてない（env or browser）");
 
-  try {
-    const cred = await createUserWithEmailAndPassword(auth, email, password);
-    // ...以下そのまま
-  } finally {
-    setLoading(false);
-  }
+    setLoading(true);
+    try {
+      // ✅ 1回だけ作る
+      await createUserWithEmailAndPassword(auth, email, password);
 
-  try {
-    const cred = await createUserWithEmailAndPassword(auth, email, password);
-    const fbUser = cred.user;
+      // ✅ extra は一時保存（DBには書かない）
+      if (extra) localStorage.setItem(PENDING_EXTRA_KEY, JSON.stringify(extra));
+      else localStorage.removeItem(PENDING_EXTRA_KEY);
 
-    // ✅ extra は一時保存（DBには書かない）
-    if (extra) localStorage.setItem(PENDING_EXTRA_KEY, JSON.stringify(extra));
-    else localStorage.removeItem(PENDING_EXTRA_KEY);
+      // ✅ avatar も一時保存（dataURL）
+      if (avatarFile) {
+  const dataUrl = await fileToDataUrlResized(avatarFile, 512, 0.85);
+  localStorage.setItem(PENDING_AVATAR_KEY, dataUrl);
+} else {
+  localStorage.removeItem(PENDING_AVATAR_KEY);
+}
 
-    // ✅ avatar も一時保存（任意）
-    if (avatarFile) {
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result));
-        reader.onerror = () => reject(new Error("avatar read failed"));
-        reader.readAsDataURL(avatarFile);
-      });
-      sessionStorage.setItem(PENDING_AVATAR_KEY, dataUrl);
-    } else {
-      sessionStorage.removeItem(PENDING_AVATAR_KEY);
+      // ✅ Resend経由で認証メール送信（Functions callable）
+      if (!functions) throw new Error("Functions が初期化できてない（env or browser）");
+      const sendVerificationEmail = httpsCallable(functions, "sendVerificationEmail");
+      await sendVerificationEmail({ nickname: extra?.nickname ?? "" });
+
+      router.replace("/verify-email");
+    } finally {
+      setLoading(false);
     }
-
-    // ✅ Resend経由で認証メール送信（Functions callable）
-    const functions = getFunctions(undefined, "asia-northeast1");
-    const sendVerificationEmail = httpsCallable(functions, "sendVerificationEmail");
-    await sendVerificationEmail({ nickname: extra?.nickname ?? "" });
-
-    router.replace("/verify-email");
-  } finally {
-    setLoading(false);
-  }
-};
+  };
 
   const login = async (email: string, password: string) => {
     if (!auth) throw new Error("Firebase Auth が初期化できてない（env or browser）");
-  setLoading(true);
-  try {
-    await signInWithEmailAndPassword(auth, email, password);
-  } finally {
-    setLoading(false);
-  }
+    setLoading(true);
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const logout = async () => {
-  if (!auth) return; // ここは落とさず黙って抜けてもOK
-  setLoading(true);
-  try {
-    await signOut(auth);
-    setUser(null);
-    setUserData(null);
-    router.replace("/login");
-  } finally {
-    setLoading(false);
-  }
-};
+    if (!auth) return;
+    setLoading(true);
+    try {
+      await signOut(auth);
+      setUser(null);
+      setUserData(null);
+      router.replace("/login");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
-    <AuthContext.Provider
-      value={{ user, userData, loading, signup, login, logout }}
-    >
+    <AuthContext.Provider value={{ user, userData, loading, signup, login, logout }}>
       {children}
     </AuthContext.Provider>
   );
