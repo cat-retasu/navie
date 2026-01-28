@@ -1,270 +1,246 @@
-// app/admin/requests/page.tsx
+// app/requests/page.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/AuthProvider";
 import { getDbClient } from "@/lib/firebase";
+import NavieBg from "@/components/NavieBg";
+import NavieButton from "@/components/NavieButton";
 import {
   addDoc,
   collection,
   doc,
-  limit,
+  getDoc,
   onSnapshot,
   orderBy,
   query,
   serverTimestamp,
-  setDoc,
   Timestamp,
+  updateDoc,
+  where,
 } from "firebase/firestore";
 
 function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
 
-type ReqStatus = "draft" | "submitted" | "confirmed";
-
-type Req = {
-  id: string; // uid
-  userId: string;
-  status: ReqStatus;
-  candidates: string[]; // "YYYY-MM-DDTHH:00|30"
-  note?: string;
-  confirmed?: {
-    type: "interview" | "trial";
-    start: string;
-    end: string;
-    place?: string;
-  } | null;
-  updatedAt?: any;
-  submittedAt?: any;
-  confirmedAt?: any;
-};
-
-function isHalfHourKey(s: string) {
-  return /^\d{4}-\d{2}-\d{2}T\d{2}:(00|30)$/.test(s);
-}
-
-function parseKeyToDateLocal(key: string): Date | null {
-  // "YYYY-MM-DDTHH:MM" → ローカルDate（安全パース）
-  if (!isHalfHourKey(key)) return null;
-  const [datePart, timePart] = key.split("T");
-  const [Y, M, D] = datePart.split("-").map((v) => Number(v));
-  const [hh, mm] = timePart.split(":").map((v) => Number(v));
-  if (!Y || !M || !D) return null;
-  return new Date(Y, M - 1, D, hh ?? 0, mm ?? 0, 0, 0);
-}
-
-function addMinutesKey(startKey: string, minutes: number): string | null {
-  const d = parseKeyToDateLocal(startKey);
-  if (!d) return null;
-  d.setMinutes(d.getMinutes() + minutes);
-
-  const Y = d.getFullYear();
-  const M = String(d.getMonth() + 1).padStart(2, "0");
-  const D = String(d.getDate()).padStart(2, "0");
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mm = String(d.getMinutes()).padStart(2, "0");
-
-  // 30分刻みのみ許可（念のため）
-  if (!(mm === "00" || mm === "30")) return null;
-  return `${Y}-${M}-${D}T${hh}:${mm}`;
-}
-
-function toJPLabel(key: string) {
-  // "YYYY-MM-DDTHH:MM" → "M/D(曜) HH:MM"
-  const d = parseKeyToDateLocal(key);
-  if (!d) return key;
-  const w = ["日", "月", "火", "水", "木", "金", "土"][d.getDay()];
-  const M = d.getMonth() + 1;
-  const D = d.getDate();
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mm = String(d.getMinutes()).padStart(2, "0");
-  return `${M}/${D}(${w}) ${hh}:${mm}`;
-}
-
-function badge(status: ReqStatus) {
-  const label = status === "submitted" ? "提出" : status === "confirmed" ? "確定" : "下書き";
-  const strong = status === "submitted" || status === "confirmed";
+function NomiCard({
+  label,
+  title,
+  children,
+  className,
+}: {
+  label: string;
+  title: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
   return (
-    <span
-      className="inline-flex items-center rounded-full px-3 py-1 text-[11px] font-semibold border"
-      style={{
-        borderColor: strong ? "rgba(255,59,122,0.35)" : "rgba(0,0,0,0.10)",
-        background: strong ? "rgba(255,59,122,0.10)" : "rgba(255,255,255,0.7)",
-        color: strong ? "var(--pink)" : "rgba(95,96,107,0.85)",
-      }}
-    >
-      {label}
-    </span>
+    <section className={cx("nomi-card p-6 md:p-7", className)}>
+      <p
+        className="text-[11px] font-semibold tracking-[0.14em]"
+        style={{ color: "var(--pink)" }}
+      >
+        {label}
+      </p>
+      <h2 className="mt-2 text-[15px] font-semibold text-[#0f0f12]">{title}</h2>
+      <div className="mt-4">{children}</div>
+    </section>
   );
 }
 
-export default function AdminRequestsPage() {
+type RequestType = "interview" | "trial" | "other";
+type RequestStatus = "open" | "scheduled" | "closed";
+
+type ReqRow = {
+  id: string;
+  userId: string;
+  type: RequestType;
+  status: RequestStatus;
+  memo: string;
+  candidates: Array<{ startAt: Date; endAt: Date | null; note: string }>;
+  createdAt: Date | null;
+  chosenIndex?: number | null;
+  scheduledEventId?: string | null;
+};
+
+function fmtDateTime(d: Date) {
+  return d.toLocaleString("ja-JP", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+export default function RequestsPage() {
   const router = useRouter();
   const db = useMemo(() => getDbClient(), []);
   const { user, userData, loading } = useAuth();
 
-  const [raw, setRaw] = useState<Req[]>([]);
-  const [tab, setTab] = useState<"submitted" | "confirmed">("submitted");
-  const [qText, setQText] = useState("");
-
-  const [selected, setSelected] = useState<Req | null>(null);
-
-  // 確定入力フォーム
-  const [type, setType] = useState<"interview" | "trial">("interview");
-  const [start, setStart] = useState<string>(""); // key
-  const [duration, setDuration] = useState<number>(60); // minutes
-  const [end, setEnd] = useState<string>(""); // key（自動計算）
-  const [place, setPlace] = useState<string>("");
-
-  const [saving, setSaving] = useState(false);
-  const [msg, setMsg] = useState("");
-
   // admin guard
   useEffect(() => {
     if (loading) return;
-    if (!user) return void router.replace("/login");
-    if (userData?.role !== "admin") return void router.replace("/dashboard");
+
+    if (!user) {
+      router.replace("/login");
+      return;
+    }
+    if (userData?.role === "suspended") {
+      router.replace("/suspended");
+      return;
+    }
+    if (userData?.role !== "admin") {
+      router.replace("/dashboard");
+      return;
+    }
   }, [user, userData, loading, router]);
 
-  // 一覧購読（whereを避けて index 要求を減らす）
+  const isLoadingAll = loading || !user || !userData;
+
+  const [tab, setTab] = useState<"open" | "scheduled">("open");
+
+  const [rows, setRows] = useState<ReqRow[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selected = useMemo(() => rows.find((r) => r.id === selectedId) ?? null, [rows, selectedId]);
+
+  // list requests
   useEffect(() => {
-    if (!db) return;
+    if (!db || !user) return;
 
-    const qy = query(collection(db, "interviewRequests"), orderBy("updatedAt", "desc"), limit(200));
-    const unsub = onSnapshot(
-      qy,
-      (snap) => {
-        const next: Req[] = snap.docs.map((d) => {
-          const data = d.data() as any;
-          return {
-            id: d.id,
-            userId: data.userId ?? d.id,
-            status: (data.status ?? "draft") as ReqStatus,
-            candidates: Array.isArray(data.candidates) ? data.candidates : [],
-            note: typeof data.note === "string" ? data.note : "",
-            confirmed: data.confirmed ?? null,
-            updatedAt: data.updatedAt ?? null,
-            submittedAt: data.submittedAt ?? null,
-            confirmedAt: data.confirmedAt ?? null,
-          };
-        });
-
-        setRaw(next);
-
-        // 選択中の更新追従
-        if (selected) {
-          const hit = next.find((x) => x.id === selected.id);
-          if (hit) setSelected(hit);
-        }
-      },
-      (err) => {
-        setMsg(err?.message ? `読み込みエラー: ${err.message}` : "読み込みエラー");
-      }
+    const qy = query(
+      collection(db, "requests"),
+      where("status", "==", tab === "open" ? "open" : "scheduled"),
+      orderBy("createdAt", "desc")
     );
+
+    const unsub = onSnapshot(qy, (snap) => {
+      const list: ReqRow[] = snap.docs.map((d) => {
+        const data = d.data() as any;
+        const candidates = Array.isArray(data.candidates)
+          ? data.candidates.map((c: any) => ({
+              startAt: c?.startAt?.toDate ? c.startAt.toDate() : new Date(),
+              endAt: c?.endAt?.toDate ? c.endAt.toDate() : null,
+              note: c?.note ?? "",
+            }))
+          : [];
+        return {
+          id: d.id,
+          userId: data.userId,
+          type: data.type ?? "other",
+          status: data.status ?? "open",
+          memo: data.memo ?? "",
+          candidates,
+          createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : null,
+          chosenIndex: data.chosenIndex ?? null,
+          scheduledEventId: data.scheduledEventId ?? null,
+        };
+      });
+
+      setRows(list);
+      if (!selectedId && list.length > 0) setSelectedId(list[0].id);
+      if (selectedId && !list.some((x) => x.id === selectedId)) setSelectedId(list[0]?.id ?? null);
+    });
 
     return () => unsub();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [db]);
+  }, [db, user, tab]);
 
-  const items = useMemo(() => {
-    const byTab = raw.filter((r) => r.status === tab);
-    const s = qText.trim();
-    if (!s) return byTab;
-    return byTab.filter((r) => (r.userId ?? "").includes(s) || (r.id ?? "").includes(s));
-  }, [raw, tab, qText]);
-
-  const open = (r: Req) => {
-    setSelected(r);
-    setMsg("");
-
-    // フォーム初期化：確定があればそれ優先、なければ候補先頭
-    const baseStart = r.confirmed?.start ?? r.candidates[0] ?? "";
-    setType(r.confirmed?.type ?? "interview");
-    setStart(baseStart);
-    setDuration(60);
-    setEnd(r.confirmed?.end ?? (baseStart ? addMinutesKey(baseStart, 60) ?? "" : ""));
-    setPlace(r.confirmed?.place ?? "");
-  };
-
-  // start / duration が変わったら end 自動更新（ただし start が空なら何もしない）
+  // user info
+  const [userInfo, setUserInfo] = useState<{ nickname?: string; area?: string; phone?: string } | null>(null);
   useEffect(() => {
-    if (!start) return;
-    const next = addMinutesKey(start, duration);
-    if (next) setEnd(next);
-  }, [start, duration]);
-
-  const pickStartFromCandidate = (key: string) => {
-    setStart(key);
-    const next = addMinutesKey(key, duration);
-    if (next) setEnd(next);
-  };
-
-  const saveConfirm = async () => {
-    if (!db || !selected) return;
-
-    setMsg("");
-
-    if (!isHalfHourKey(start) || !isHalfHourKey(end)) {
-      setMsg("start/end が不正です（YYYY-MM-DDTHH:00|30）");
+    if (!db || !selected?.userId) {
+      setUserInfo(null);
       return;
     }
+    (async () => {
+      const uref = doc(db, "users", selected.userId);
+      const snap = await getDoc(uref);
+      if (!snap.exists()) {
+        setUserInfo(null);
+        return;
+      }
+      const data = snap.data() as any;
+      setUserInfo({
+        nickname: data.nickname ?? "",
+        area: data.area ?? "",
+        phone: data.phoneNumber ?? data.phone ?? "",
+      });
+    })();
+  }, [db, selected?.userId]);
 
-    const dStart = parseKeyToDateLocal(start);
-    const dEnd = parseKeyToDateLocal(end);
-    if (!dStart || !dEnd) {
-      setMsg("日時のパースに失敗しました");
-      return;
-    }
-    if (dEnd <= dStart) {
-      setMsg("終了は開始より後にしてね");
-      return;
-    }
+  // confirm -> create schedule
+  const [title, setTitle] = useState("");
+  const [location, setLocation] = useState("");
+  const [memo, setMemo] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    // 選択変更時にフォームを軽く初期化
+    setTitle("");
+    setLocation("");
+    setMemo("");
+  }, [selectedId]);
+
+  const confirmCandidate = async (candidateIndex: number) => {
+    if (!db || !user || !selected) return;
+    const c = selected.candidates[candidateIndex];
+    if (!c) return;
+
+    const defaultTitle =
+      title.trim() ||
+      (selected.type === "interview" ? "面接" : selected.type === "trial" ? "体験入店" : "予定");
+    if (!defaultTitle) return alert("タイトルを入れてね");
 
     setSaving(true);
     try {
-      // 1) interviewRequests を confirmed に更新
-      await setDoc(
-        doc(db, "interviewRequests", selected.id),
-        {
-          status: "confirmed",
-          confirmed: {
-            type,
-            start,
-            end,
-            place: place.trim(),
-          },
-          confirmedAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true }
-      );
-
-      // 2) appointments に積む（ユーザー側カレンダー表示用：後で使える）
-      // いらなければこの addDoc ブロックを削ってOK
-      await addDoc(collection(db, "appointments"), {
-        userId: selected.id,
-        type,
-        startAt: Timestamp.fromDate(dStart),
-        endAt: Timestamp.fromDate(dEnd),
-        startKey: start,
-        endKey: end,
-        place: place.trim(),
+      // 1) schedule 作成
+      const scheduleRef = await addDoc(collection(db, "schedules"), {
+        userId: selected.userId,
+        type: selected.type === "trial" ? "trial" : selected.type === "interview" ? "interview" : "other",
+        title: defaultTitle,
+        startAt: Timestamp.fromDate(c.startAt),
+        endAt: c.endAt ? Timestamp.fromDate(c.endAt) : null,
+        location: location.trim(),
+        memo: (memo || selected.memo || "").trim(),
+        status: "confirmed",
         createdBy: "admin",
+        adminId: user.uid,
+        requestId: selected.id,
+        isDeleted: false,
         createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
       });
 
-      setMsg("確定しました ✅（appointments も追加）");
+      // 2) request 更新
+      await updateDoc(doc(db, "requests", selected.id), {
+        status: "scheduled",
+        chosenIndex: candidateIndex,
+        scheduledEventId: scheduleRef.id,
+        updatedAt: serverTimestamp(),
+      });
+
+      alert("日程を確定してスケジュールを作成したよ！");
     } catch (e: any) {
-      setMsg(e?.message ? `保存に失敗: ${e.message}` : "保存に失敗しました");
+      console.error(e);
+      alert(e?.message ?? "確定に失敗した…");
     } finally {
       setSaving(false);
-      setTimeout(() => setMsg(""), 3500);
     }
   };
 
-  const isLoadingAll = loading || !user || !userData;
+  const closeRequest = async () => {
+    if (!db || !selected) return;
+    if (!confirm("このリクエストをクローズする？")) return;
+    await updateDoc(doc(db, "requests", selected.id), {
+      status: "closed",
+      updatedAt: serverTimestamp(),
+    });
+  };
 
   if (isLoadingAll) {
     return (
@@ -277,271 +253,268 @@ export default function AdminRequestsPage() {
   }
 
   return (
-    <main className="min-h-screen bg-white text-[#0f0f12] px-4 py-10">
-      <div className="mx-auto max-w-6xl">
-        {/* Header */}
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <p className="text-[11px] font-semibold tracking-[0.18em]" style={{ color: "var(--pink)" }}>
-              REQUESTS
-            </p>
-            <h1 className="mt-1 text-xl font-semibold">面接 / 体入の確定</h1>
-            <p className="mt-1 text-[12px]" style={{ color: "rgba(95,96,107,0.85)" }}>
-              候補をクリック → 開始に反映 → 所要時間で終了を自動 → 確定保存
-            </p>
-          </div>
+    <main className="min-h-screen text-[#0f0f12] relative overflow-hidden">
+      <NavieBg />
+      <div aria-hidden className="absolute inset-0 -z-10">
+        <div
+          className="absolute inset-0"
+          style={{
+            backgroundImage: `
+              radial-gradient(1200px 720px at 18% 12%, rgba(255,59,122,0.14), transparent 62%),
+              radial-gradient(900px 640px at 88% 28%, rgba(255,208,223,0.42), transparent 62%),
+              radial-gradient(1000px 760px at 50% 110%, rgba(255,59,122,0.10), transparent 62%),
+              linear-gradient(180deg, rgba(255,255,255,1) 0%, rgba(255,249,251,1) 48%, rgba(255,255,255,1) 100%)
+            `,
+          }}
+        />
+        <div className="pointer-events-none absolute inset-0 nomi-dots" />
+        <div className="pointer-events-none absolute inset-0 navie-grain" />
+      </div>
 
-          <button
-            onClick={() => router.push("/admin")}
-            className="rounded-full border border-black/10 bg-white px-4 py-2 text-[12px] font-semibold hover:bg-black/[0.02] transition"
-            style={{ color: "var(--muted)" }}
-          >
-            管理TOPへ
-          </button>
-        </div>
+      <div className="mx-auto w-full px-4 pb-12 pt-16 md:pt-20">
+        <div
+          className={cx(
+            "mx-auto w-full max-w-6xl",
+            "md:rounded-[44px] md:border md:border-[rgba(255,59,122,0.18)]",
+            "md:bg-white/55 md:backdrop-blur-[14px]",
+            "md:shadow-[0_26px_90px_rgba(18,18,24,0.14)]",
+            "md:p-6 lg:p-8",
+            "md:relative md:overflow-hidden"
+          )}
+        >
+          <div
+            aria-hidden
+            className="hidden md:block absolute inset-0 pointer-events-none"
+            style={{
+              background:
+                "radial-gradient(900px 420px at 20% 10%, rgba(255,255,255,0.55), transparent 60%)",
+            }}
+          />
 
-        <div className="mt-6 grid grid-cols-1 lg:grid-cols-[420px_1fr] gap-4">
-          {/* List */}
-          <section className="rounded-3xl border border-black/10 bg-white p-5">
-            {/* Tabs + Search */}
-            <div className="flex items-center justify-between gap-3">
-              <div className="inline-flex rounded-full border border-black/10 bg-white/80 p-1">
-                {(["submitted", "confirmed"] as const).map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => setTab(t)}
-                    className={cx(
-                      "rounded-full px-4 py-2 text-[12px] font-semibold transition",
-                      tab === t ? "bg-[rgba(255,59,122,0.10)]" : "hover:bg-black/[0.02]"
-                    )}
-                    style={{ color: tab === t ? "var(--pink)" : "rgba(95,96,107,0.85)" }}
-                  >
-                    {t === "submitted" ? "提出" : "確定"}
-                  </button>
-                ))}
-              </div>
-
-              <input
-                value={qText}
-                onChange={(e) => setQText(e.target.value)}
-                placeholder="uid検索"
-                className="h-10 w-[160px] rounded-full border border-black/10 bg-white px-4 text-[12px] outline-none focus:ring-2 focus:ring-[rgba(255,59,122,0.20)]"
-              />
-            </div>
-
-            <p className="mt-3 text-[12px] font-semibold" style={{ color: "rgba(95,96,107,0.85)" }}>
-              {tab === "submitted" ? "提出" : "確定"}（{items.length}）
-            </p>
-
-            <div className="mt-3 space-y-2">
-              {items.map((r) => {
-                const isActive = selected?.id === r.id;
-                const topLine =
-                  r.status === "confirmed" && r.confirmed?.start
-                    ? `${toJPLabel(r.confirmed.start)}`
-                    : r.candidates[0]
-                    ? `${toJPLabel(r.candidates[0])}〜`
-                    : "候補なし";
-
-                return (
-                  <button
-                    key={r.id}
-                    onClick={() => open(r)}
-                    className={cx(
-                      "w-full text-left rounded-2xl border p-4 transition",
-                      isActive ? "border-[rgba(255,59,122,0.35)] bg-[rgba(255,59,122,0.08)]" : "border-black/10 bg-white hover:bg-black/[0.02]"
-                    )}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="text-[13px] font-semibold">{r.userId}</div>
-                      {badge(r.status)}
-                    </div>
-                    <div className="mt-1 text-[11px]" style={{ color: "rgba(95,96,107,0.85)" }}>
-                      {topLine} ・ 候補 {r.candidates.length} 件
-                    </div>
-                  </button>
-                );
-              })}
-
-              {items.length === 0 && (
-                <div className="rounded-2xl border border-black/10 bg-white/60 p-4 text-[12px]" style={{ color: "rgba(95,96,107,0.85)" }}>
-                  まだありません
-                </div>
-              )}
-            </div>
-          </section>
-
-          {/* Detail */}
-          <section className="rounded-3xl border border-black/10 bg-white p-5">
-            {!selected ? (
-              <div className="text-[12px]" style={{ color: "rgba(95,96,107,0.85)" }}>
-                左のリストから選んでね
-              </div>
-            ) : (
-              <>
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="text-[14px] font-semibold">{selected.userId}</div>
-                    <div className="mt-2">{badge(selected.status)}</div>
-                  </div>
-
-                  {!!msg && (
-                    <span className="text-[12px] font-semibold" style={{ color: msg.includes("失敗") || msg.includes("エラー") ? "rgba(255,47,114,0.95)" : "var(--pink)" }}>
-                      {msg}
+          <div className="relative">
+            {/* Header */}
+            <header className="mb-6">
+              <div className="flex items-center justify-between gap-3">
+                <Link
+                  href="/admin"
+                  className="inline-flex items-center gap-2 text-[12px] font-semibold"
+                  style={{ color: "var(--muted)" }}
+                >
+                  <span className="h-7 w-7 rounded-full border border-black/10 bg-white/70 backdrop-blur-[10px] flex items-center justify-center">
+                    <span className="text-[12px]" style={{ color: "var(--pink)" }}>
+                      ←
                     </span>
-                  )}
+                  </span>
+                  管理画面へ
+                </Link>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setTab("open")}
+                    className={cx(
+                      "rounded-full border px-4 py-2 text-[12px] font-semibold transition",
+                      tab === "open" ? "border-[rgba(255,59,122,0.35)] bg-[rgba(255,59,122,0.10)]" : "border-black/10 bg-white/70 hover:bg-white"
+                    )}
+                    style={{ color: tab === "open" ? "var(--pink)" : "var(--muted)" }}
+                  >
+                    OPEN
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTab("scheduled")}
+                    className={cx(
+                      "rounded-full border px-4 py-2 text-[12px] font-semibold transition",
+                      tab === "scheduled" ? "border-[rgba(255,59,122,0.35)] bg-[rgba(255,59,122,0.10)]" : "border-black/10 bg-white/70 hover:bg-white"
+                    )}
+                    style={{ color: tab === "scheduled" ? "var(--pink)" : "var(--muted)" }}
+                  >
+                    SCHEDULED
+                  </button>
                 </div>
+              </div>
 
-                {/* Candidates */}
-                <div className="mt-4 rounded-2xl border border-black/10 bg-black/[0.02] p-4">
-                  <div className="flex items-center justify-between">
-                    <p className="text-[12px] font-semibold">候補（クリックで開始にセット）</p>
-                    <p className="text-[11px]" style={{ color: "rgba(95,96,107,0.75)" }}>
-                      {selected.candidates.length}件
-                    </p>
+              <p className="mt-5 text-[11px] font-semibold tracking-[0.18em]" style={{ color: "var(--pink)" }}>
+                REQUESTS
+              </p>
+              <h1 className="mt-2 text-2xl md:text-3xl font-semibold tracking-tight text-[#0f0f12]">
+                候補日から日程確定
+              </h1>
+              <p className="mt-2 text-xs md:text-sm leading-relaxed" style={{ color: "var(--muted)" }}>
+                ユーザーが送った候補日を確認して、面接/体入をスケジュール化します。
+              </p>
+            </header>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* list */}
+              <NomiCard label="LIST" title="リクエスト一覧" className="md:col-span-1">
+                {rows.length === 0 ? (
+                  <p className="text-[12px]" style={{ color: "rgba(95,96,107,0.85)" }}>
+                    いまは {tab === "open" ? "OPEN" : "SCHEDULED"} がありません
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {rows.map((r) => (
+                      <button
+                        key={r.id}
+                        type="button"
+                        onClick={() => setSelectedId(r.id)}
+                        className={cx(
+                          "w-full text-left rounded-2xl border px-4 py-3 transition",
+                          selectedId === r.id
+                            ? "border-[rgba(255,59,122,0.35)] bg-[rgba(255,59,122,0.10)]"
+                            : "border-black/10 bg-white/70 hover:bg-white"
+                        )}
+                      >
+                        <p className="text-[12px] font-semibold text-[#0f0f12]">
+                          {r.type === "interview" ? "面接" : r.type === "trial" ? "体入" : "その他"} /{" "}
+                          <span className="opacity-80">{r.userId.slice(0, 6)}…</span>
+                        </p>
+                        <p className="mt-1 text-[11px]" style={{ color: "rgba(95,96,107,0.85)" }}>
+                          候補 {r.candidates.length}件
+                          {r.createdAt ? ` ・${r.createdAt.toLocaleDateString("ja-JP")}` : ""}
+                        </p>
+                      </button>
+                    ))}
                   </div>
+                )}
+              </NomiCard>
 
-                  {selected.note ? (
-                    <p className="mt-2 text-[12px]" style={{ color: "rgba(95,96,107,0.85)" }}>
-                      メモ：{selected.note}
-                    </p>
-                  ) : null}
+              {/* detail */}
+              <NomiCard label="DETAIL" title="内容" className="md:col-span-2">
+                {!selected ? (
+                  <p className="text-[12px]" style={{ color: "rgba(95,96,107,0.85)" }}>
+                    左の一覧から選択してね
+                  </p>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="rounded-2xl border border-black/10 bg-white/70 px-4 py-3">
+                      <p className="text-[12px] font-semibold text-[#0f0f12]">
+                        ユーザー：{userInfo?.nickname || "（未設定）"}{" "}
+                        <span className="text-[11px]" style={{ color: "rgba(95,96,107,0.85)" }}>
+                          / {selected.userId}
+                        </span>
+                      </p>
+                      <p className="mt-1 text-[11px]" style={{ color: "rgba(95,96,107,0.85)" }}>
+                        希望エリア：{userInfo?.area || "—"} {userInfo?.phone ? ` / TEL: ${userInfo.phone}` : ""}
+                      </p>
+                      {selected.memo ? (
+                        <p className="mt-2 text-[12px]" style={{ color: "var(--muted)" }}>
+                          {selected.memo}
+                        </p>
+                      ) : null}
+                    </div>
 
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {selected.candidates
-                      .slice()
-                      .sort((a, b) => a.localeCompare(b))
-                      .map((c) => {
-                        const active = c === start;
-                        return (
-                          <button
-                            key={c}
-                            type="button"
-                            onClick={() => pickStartFromCandidate(c)}
-                            className={cx(
-                              "rounded-full border px-3 py-1 text-[12px] font-semibold transition",
-                              active
-                                ? "border-[rgba(255,59,122,0.35)] bg-[rgba(255,59,122,0.10)]"
-                                : "border-black/10 bg-white/80 hover:bg-white"
-                            )}
-                            style={{ color: active ? "var(--pink)" : "rgba(95,96,107,0.90)" }}
-                            title={c}
-                          >
-                            {toJPLabel(c)}
-                          </button>
-                        );
-                      })}
+                    <div>
+                      <p className="text-[12px] font-semibold text-[#0f0f12]">候補日</p>
+                      <div className="mt-2 space-y-2">
+                        {selected.candidates.map((c, idx) => (
+                          <div key={idx} className="rounded-2xl border border-black/10 bg-white/70 px-4 py-3">
+                            <p className="text-[12px] font-semibold text-[#0f0f12]">
+                              {idx + 1}. {fmtDateTime(c.startAt)}
+                              {c.endAt ? ` 〜 ${fmtDateTime(c.endAt)}` : ""}
+                            </p>
+                            {c.note ? (
+                              <p className="mt-1 text-[11px]" style={{ color: "rgba(95,96,107,0.85)" }}>
+                                {c.note}
+                              </p>
+                            ) : null}
 
-                    {selected.candidates.length === 0 && (
-                      <div className="text-[12px]" style={{ color: "rgba(95,96,107,0.85)" }}>
-                        候補がありません
+                            {tab === "open" ? (
+                              <div className="mt-3">
+                                <button
+                                  type="button"
+                                  disabled={saving}
+                                  onClick={() => confirmCandidate(idx)}
+                                  className={cx(
+                                    "w-full rounded-full border px-4 py-2 text-[12px] font-semibold transition",
+                                    "border-[rgba(255,59,122,0.35)] bg-[rgba(255,59,122,0.10)] hover:bg-[rgba(255,59,122,0.14)]",
+                                    saving && "opacity-60 pointer-events-none"
+                                  )}
+                                  style={{ color: "var(--pink)" }}
+                                >
+                                  この候補で確定する
+                                </button>
+                              </div>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* create settings */}
+                    {tab === "open" ? (
+                      <div className="rounded-2xl border border-black/10 bg-white/70 px-4 py-4">
+                        <p className="text-[12px] font-semibold text-[#0f0f12]">確定時の設定（任意）</p>
+                        <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
+                          <label className="block">
+                            <span className="text-[11px] font-semibold" style={{ color: "rgba(95,96,107,0.85)" }}>
+                              タイトル
+                            </span>
+                            <input
+                              value={title}
+                              onChange={(e) => setTitle(e.target.value)}
+                              placeholder="例）渋谷◯◯ 店 面接"
+                              className="mt-1 w-full rounded-2xl border border-black/10 bg-white/70 px-3 py-2 text-[12px] outline-none"
+                            />
+                          </label>
+                          <label className="block">
+                            <span className="text-[11px] font-semibold" style={{ color: "rgba(95,96,107,0.85)" }}>
+                              場所
+                            </span>
+                            <input
+                              value={location}
+                              onChange={(e) => setLocation(e.target.value)}
+                              placeholder="例）渋谷駅 / 店名"
+                              className="mt-1 w-full rounded-2xl border border-black/10 bg-white/70 px-3 py-2 text-[12px] outline-none"
+                            />
+                          </label>
+                        </div>
+
+                        <label className="block mt-2">
+                          <span className="text-[11px] font-semibold" style={{ color: "rgba(95,96,107,0.85)" }}>
+                            メモ
+                          </span>
+                          <textarea
+                            value={memo}
+                            onChange={(e) => setMemo(e.target.value)}
+                            rows={3}
+                            placeholder="服装/集合/持ち物など（リクエストのメモを上書きできます）"
+                            className="mt-1 w-full rounded-2xl border border-black/10 bg-white/70 px-3 py-2 text-[12px] outline-none"
+                          />
+                        </label>
+
+                        <div className="mt-3">
+  <button
+    type="button"
+    disabled={saving}
+    onClick={closeRequest}
+    className={cx(
+      "w-full rounded-full border border-black/10 bg-white/70 px-4 py-2 text-[12px] font-semibold hover:bg-white transition",
+      saving && "opacity-60 pointer-events-none"
+    )}
+    style={{ color: "var(--muted)" }}
+  >
+    クローズ
+  </button>
+</div>
+
+                      </div>
+                    ) : (
+                      <div className="rounded-2xl border border-black/10 bg-white/70 px-4 py-4">
+                        <p className="text-[12px] font-semibold text-[#0f0f12]">確定情報</p>
+                        <p className="mt-2 text-[12px]" style={{ color: "rgba(95,96,107,0.85)" }}>
+                          chosenIndex：{selected.chosenIndex ?? "—"}
+                          <br />
+                          scheduledEventId：{selected.scheduledEventId ?? "—"}
+                        </p>
                       </div>
                     )}
                   </div>
-                </div>
-
-                {/* Confirm form */}
-                <div className="mt-4 rounded-2xl border border-black/10 bg-white p-4">
-                  <p className="text-[12px] font-semibold">確定入力</p>
-
-                  <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <label className="text-[12px] font-semibold" style={{ color: "rgba(95,96,107,0.85)" }}>
-                      種別
-                      <select
-                        value={type}
-                        onChange={(e) => setType(e.target.value as any)}
-                        className="mt-2 h-11 w-full rounded-2xl border border-black/10 bg-white px-4 text-[12px] font-semibold outline-none focus:ring-2 focus:ring-[rgba(255,59,122,0.20)]"
-                      >
-                        <option value="interview">面接</option>
-                        <option value="trial">体験入店</option>
-                      </select>
-                    </label>
-
-                    <label className="text-[12px] font-semibold" style={{ color: "rgba(95,96,107,0.85)" }}>
-                      場所（任意）
-                      <input
-                        value={place}
-                        onChange={(e) => setPlace(e.target.value)}
-                        className="mt-2 h-11 w-full rounded-2xl border border-black/10 bg-white px-4 text-[12px] font-semibold outline-none focus:ring-2 focus:ring-[rgba(255,59,122,0.20)]"
-                        placeholder="例）オンライン / 渋谷"
-                      />
-                    </label>
-
-                    <label className="text-[12px] font-semibold" style={{ color: "rgba(95,96,107,0.85)" }}>
-                      開始（候補クリックで入る）
-                      <input
-                        value={start}
-                        onChange={(e) => setStart(e.target.value)}
-                        className="mt-2 h-11 w-full rounded-2xl border border-black/10 bg-white px-4 text-[12px] font-semibold outline-none focus:ring-2 focus:ring-[rgba(255,59,122,0.20)]"
-                        placeholder="YYYY-MM-DDTHH:00"
-                      />
-                    </label>
-
-                    <label className="text-[12px] font-semibold" style={{ color: "rgba(95,96,107,0.85)" }}>
-                      終了（自動）
-                      <input
-                        value={end}
-                        onChange={(e) => setEnd(e.target.value)}
-                        className="mt-2 h-11 w-full rounded-2xl border border-black/10 bg-white px-4 text-[12px] font-semibold outline-none focus:ring-2 focus:ring-[rgba(255,59,122,0.20)]"
-                        placeholder="YYYY-MM-DDTHH:00"
-                      />
-                    </label>
-                  </div>
-
-                  {/* Duration */}
-                  <div className="mt-4 flex flex-wrap items-center gap-2">
-                    <span className="text-[12px] font-semibold" style={{ color: "rgba(95,96,107,0.85)" }}>
-                      所要時間
-                    </span>
-
-                    {[30, 60, 90, 120].map((m) => (
-                      <button
-                        key={m}
-                        type="button"
-                        onClick={() => setDuration(m)}
-                        className={cx(
-                          "rounded-full border px-4 py-2 text-[12px] font-semibold transition",
-                          duration === m
-                            ? "border-[rgba(255,59,122,0.35)] bg-[rgba(255,59,122,0.10)]"
-                            : "border-black/10 bg-white/80 hover:bg-white"
-                        )}
-                        style={{ color: duration === m ? "var(--pink)" : "rgba(95,96,107,0.85)" }}
-                      >
-                        {m}分
-                      </button>
-                    ))}
-
-                    {start && end && (
-                      <span className="ml-1 text-[12px] font-semibold" style={{ color: "rgba(95,96,107,0.85)" }}>
-                        → {toJPLabel(start)} 〜 {toJPLabel(end)}
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="mt-4">
-                    <button
-                      onClick={saveConfirm}
-                      disabled={saving || !selected}
-                      className={cx(
-                        "w-full rounded-2xl px-5 py-3 text-[13px] font-semibold transition",
-                        "border border-[rgba(255,59,122,0.22)]",
-                        "bg-[linear-gradient(135deg,rgba(255,47,114,0.14)_0%,rgba(255,91,141,0.10)_55%,rgba(255,157,184,0.10)_100%)]",
-                        saving ? "opacity-60 cursor-not-allowed" : "hover:bg-white/80"
-                      )}
-                      style={{ color: "var(--pink)" }}
-                    >
-                      {saving ? "保存中…" : "確定して保存"}
-                    </button>
-
-                    <p className="mt-2 text-[11px]" style={{ color: "rgba(95,96,107,0.75)" }}>
-                      ※確定すると interviewRequests が更新され、appointments にも記録されます（カレンダー表示で使える）
-                    </p>
-                  </div>
-                </div>
-              </>
-            )}
-          </section>
+                )}
+              </NomiCard>
+            </div>
+          </div>
         </div>
       </div>
     </main>

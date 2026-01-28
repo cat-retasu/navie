@@ -359,7 +359,7 @@ export default function DashboardPage() {
                 DASHBOARD
               </p>
               <h1 className="mt-2 text-2xl md:text-3xl font-semibold tracking-tight text-[#0f0f12]">
-                ようこそ、{extra.nickname || "NAVIÉ"}へ
+                ダッシュボード
               </h1>
               <p className="mt-2 text-xs md:text-sm leading-relaxed" style={{ color: "var(--muted)" }}>
                 次にやることを最短で。プロフィールと相談がここからすぐ行けます。

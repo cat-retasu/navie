@@ -9,6 +9,8 @@ import {
   addDoc,
   collection,
   doc,
+  getDoc, 
+  setDoc,
   getDocs,
   limit,
   onSnapshot,
@@ -18,6 +20,7 @@ import {
   updateDoc,
   where,
   increment,
+  runTransaction,
 } from "firebase/firestore";
 import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 import NavieBg from "@/components/NavieBg";
@@ -45,37 +48,112 @@ type RoomInfo = {
 };
 
 // ✅ 既存ルームがあれば取得、なければ作成して RoomInfo を返す
-async function getOrCreateRoom(db: any, userId: string): Promise<RoomInfo> {
-  const q = query(
-    collection(db, "chatRooms"),
-    where("userId", "==", userId),
-    limit(1)
-  );
-  const snap = await getDocs(q);
 
-  if (!snap.empty) {
-    const d = snap.docs[0];
-    const data = d.data() as any;
+async function getOrCreateRoom(db: any, userId: string): Promise<RoomInfo> {
+  // ① 正規（uid固定）ルームがあればそれを使う
+  const canonicalRef = doc(db, "chatRooms", userId);
+  const canonicalSnap = await getDoc(canonicalRef);
+  if (canonicalSnap.exists()) {
+    const data = canonicalSnap.data() as any;
     return {
-      id: d.id,
+      id: canonicalSnap.id,
       userId: data.userId ?? userId,
       adminTyping: data.adminTyping ?? false,
     };
   }
 
-  const newRoomRef = await addDoc(collection(db, "chatRooms"), {
-    userId,
-    lastMessage: "",
-    updatedAt: serverTimestamp(),
-    adminTyping: false,
-    userTyping: false,
-  });
+  // ② 旧ルーム（ランダムID）があれば “最新” を使う（履歴を守る）
+  const oldQ = query(
+    collection(db, "chatRooms"),
+    where("userId", "==", userId),
+    orderBy("updatedAt", "desc"),
+    limit(1)
+  );
+  const oldSnap = await getDocs(oldQ);
+  if (!oldSnap.empty) {
+    const d = oldSnap.docs[0].data() as any;
+    return {
+      id: oldSnap.docs[0].id,
+      userId: d.userId ?? userId,
+      adminTyping: d.adminTyping ?? false,
+    };
+  }
 
-  return {
-    id: newRoomRef.id,
-    userId,
-    adminTyping: false,
-  };
+  // ③ 何もなければ uid固定で作る（ここで増えるのは1回だけ）
+  await setDoc(
+    canonicalRef,
+    {
+      userId,
+      lastMessage: "",
+      updatedAt: serverTimestamp(),
+      adminTyping: false,
+      userTyping: false,
+      unreadCountForAdmin: 0,
+      unreadCountForUser: 0,
+      lastSender: "user",
+      welcomeSent: false, // ✅ 追加（welcome一回保証に使う）
+    },
+    { merge: true }
+  );
+
+  return { id: userId, userId, adminTyping: false };
+}
+
+async function fetchWelcomeText(db: any): Promise<string> {
+  const fallback =
+    "はじめまして！\nここでは希望条件を聞いて、あなたに合うお店を一緒に探します。\nまずは「希望エリア・希望時給・出勤頻度」を教えてください✨";
+
+  try {
+    const sref = doc(db, "settings", "welcomeMessage");
+    const ssnap = await getDoc(sref);
+    if (!ssnap.exists()) return fallback;
+
+    const d = ssnap.data() as any;
+    const text = d?.text || d?.message || d?.welcomeMessage || d?.body || d?.value || "";
+    return (typeof text === "string" && text.trim()) ? text.trim() : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+async function ensureWelcomeOnce(db: any, roomId: string) {
+  const roomRef = doc(db, "chatRooms", roomId);
+  const msgsCol = collection(db, "chatRooms", roomId, "messages");
+
+  // 既に履歴があるなら送らない
+  try {
+    const one = await getDocs(query(msgsCol, limit(1)));
+    if (!one.empty) return;
+  } catch {}
+
+  const welcomeText = await fetchWelcomeText(db);
+
+  await runTransaction(db, async (tx) => {
+    const roomSnap = await tx.get(roomRef);
+    const data = roomSnap.exists() ? (roomSnap.data() as any) : {};
+
+    if (data?.welcomeSent === true) return;
+
+    const msgRef = doc(msgsCol); // auto id
+    tx.set(msgRef, {
+      from: "admin",
+      sender: "admin",
+      text: welcomeText,
+      createdAt: serverTimestamp(),
+      readByUser: false,
+      readByAdmin: true,
+      isDeleted: false,
+      isEdited: false,
+    });
+
+    tx.set(roomRef, {
+      welcomeSent: true,
+      lastMessage: welcomeText,
+      lastSender: "admin",
+      updatedAt: serverTimestamp(),
+      unreadCountForUser: (typeof data?.unreadCountForUser === "number" ? data.unreadCountForUser : 0) + 1,
+    }, { merge: true });
+  });
 }
 
 // 日付キー（同じ日のメッセージをまとめる用）
@@ -150,23 +228,27 @@ export default function UserChatPage() {
   }, [user, userData, loading, router]);
 
   // ✅ ルーム取得 or 作成（ここ1箇所だけ）
-    useEffect(() => {
-    if (!user) return;
-    if (!db) return;
+  useEffect(() => {
+  if (!user) return;
+  if (!db) return;
 
-    (async () => {
-      setLoadingRoom(true);
-      try {
-        const r = await getOrCreateRoom(db, user.uid);
-        setRoom(r);
-      } catch (e) {
-        console.error(e);
-        setError("チャットルームの準備に失敗しました。");
-      } finally {
-        setLoadingRoom(false);
-      }
-    })();
-  }, [user, db]);
+  (async () => {
+    setLoadingRoom(true);
+    try {
+      const r = await getOrCreateRoom(db, user.uid);
+      setRoom(r);
+
+      // ✅ ここ追加
+      await ensureWelcomeOnce(db, r.id);
+
+    } catch (e) {
+      console.error(e);
+      setError("チャットルームの準備に失敗しました。");
+    } finally {
+      setLoadingRoom(false);
+    }
+  })();
+}, [user, db]);
 
   // typingTimeout のクリーンアップ
   useEffect(() => {

@@ -152,7 +152,7 @@ export default function LandingPage() {
     }}
   >
     <Image
-      src="/hero/IMG_.PNG" // ←透過PNG
+      src="/hero/meme.PNG" // ←透過PNG
       alt="NAVIÉ イメージビジュアル"
       fill
       priority
@@ -235,7 +235,7 @@ export default function LandingPage() {
 <div className="md:hidden h-full relative -mx-4">
   {/* 背景写真（フルブリード） */}
   <Image
-    src="/hero/aaa.png"
+    src="/hero/mero.png"
     alt="NAVIÉ イメージビジュアル"
     fill
     priority

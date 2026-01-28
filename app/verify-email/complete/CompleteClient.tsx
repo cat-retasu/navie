@@ -1,3 +1,4 @@
+//app/verify-email/complete/CompleteClient.tsx
 "use client";
 
 import { useEffect, useMemo, useState } from "react";

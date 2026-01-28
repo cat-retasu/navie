@@ -32,6 +32,7 @@ import {
   serverTimestamp,
   setDoc,
   updateDoc,
+  getFirestore,
 } from "firebase/firestore";
 
 import { httpsCallable } from "firebase/functions";
@@ -373,40 +374,66 @@ try {
   }, [router, pathname, auth, db]);
 
   const signup = async (
-    email: string,
-    password: string,
-    extra?: Partial<UserData>,
-    avatarFile?: File | null
-  ) => {
-    if (!auth) throw new Error("Firebase Auth が初期化できてない（env or browser）");
+  email: string,
+  password: string,
+  extra?: Partial<UserData>,
+  avatarFile?: File | null
+) => {
+  if (!auth) throw new Error("Firebase Auth が初期化できてない（env or browser）");
 
-    setLoading(true);
-    try {
-      // ✅ 1回だけ作る
-      await createUserWithEmailAndPassword(auth, email, password);
+  setLoading(true);
+  try {
+    const cred = await createUserWithEmailAndPassword(auth, email, password);
+    const uid = cred.user.uid;
 
-      // ✅ extra は一時保存（DBには書かない）
-      if (extra) localStorage.setItem(PENDING_EXTRA_KEY, JSON.stringify(extra));
-      else localStorage.removeItem(PENDING_EXTRA_KEY);
+    // ✅ ここで users / profiles を作る（未認証でも create を許可する rules にする）
+    if (!db) throw new Error("Firestore が初期化できてない（env or browser）");
 
-      // ✅ avatar も一時保存（dataURL）
-      if (avatarFile) {
-  const dataUrl = await fileToDataUrlResized(avatarFile, 512, 0.85);
-  localStorage.setItem(PENDING_AVATAR_KEY, dataUrl);
-} else {
-  localStorage.removeItem(PENDING_AVATAR_KEY);
-}
+    const userRef = doc(db, "users", uid);
+    const profileRef = doc(db, "profiles", uid);
 
-      // ✅ Resend経由で認証メール送信（Functions callable）
-      if (!functions) throw new Error("Functions が初期化できてない（env or browser）");
-      const sendVerificationEmail = httpsCallable(functions, "sendVerificationEmail");
-      await sendVerificationEmail({ nickname: extra?.nickname ?? "" });
+    const safeExtra = extra ?? {};
 
-      router.replace("/verify-email");
-    } finally {
-      setLoading(false);
+    await setDoc(
+      userRef,
+      {
+        email,
+        role: "pending",
+        createdAt: serverTimestamp(),
+        ...safeExtra,
+      },
+      { merge: true }
+    );
+
+    await setDoc(
+      profileRef,
+      {
+        ...safeExtra,
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    // ✅ avatar は「今すぐ反映」したいならここでアップロードして users.avatarUrl 等を埋める
+    // ただし Storage rules が未認証書き込みを許可してない場合は失敗するので、
+    // まずは現状の “認証後に applyPendingIfAny() で反映” を残してもOK。
+    if (avatarFile) {
+      const dataUrl = await fileToDataUrlResized(avatarFile, 512, 0.85);
+      localStorage.setItem(PENDING_AVATAR_KEY, dataUrl);
+    } else {
+      localStorage.removeItem(PENDING_AVATAR_KEY);
     }
-  };
+
+    // ✅ Resend経由で認証メール送信
+    if (!functions) throw new Error("Functions が初期化できてない（env or browser）");
+    const sendVerificationEmail = httpsCallable(functions, "sendVerificationEmail");
+    await sendVerificationEmail({ nickname: extra?.nickname ?? "" });
+
+    router.replace("/verify-email");
+  } finally {
+    setLoading(false);
+  }
+};
 
   const login = async (email: string, password: string) => {
     if (!auth) throw new Error("Firebase Auth が初期化できてない（env or browser）");

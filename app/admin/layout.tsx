@@ -134,6 +134,7 @@ export default function AdminLayout({
       { href: "/admin/users/pending", label: "承認待ち" },
       { href: "/admin/users", label: "ユーザー一覧" },
       { href: "/admin/quick-replies", label: "定型文" },
+      { href: "/admin/requests", label: "予定" },
     ],
     [unreadTotal]
   );
