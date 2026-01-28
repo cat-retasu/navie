@@ -152,7 +152,7 @@ export default function LandingPage() {
     }}
   >
     <Image
-      src="/hero/meme.PNG" // ←透過PNG
+      src="/hero/meme1.png" // ←透過PNG
       alt="NAVIÉ イメージビジュアル"
       fill
       priority
