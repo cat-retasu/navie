@@ -14,7 +14,36 @@ import { DateTime } from "luxon";
 initializeApp();
 
 const RESEND_API_KEY = defineSecret("RESEND_API_KEY");
+const ADMIN_EMAILS = defineSecret("ADMIN_EMAILS");
+
 const FROM = "NAVIÉ <noreply@mail.night-navie.jp>";
+
+// =====================
+// 管理者通知（共通）
+// =====================
+function getAdminRecipients(): string[] {
+  const raw = String(ADMIN_EMAILS.value() ?? "").trim();
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+async function sendToAdmins(resend: Resend, payload: { subject: string; html: string; text: string }) {
+  const admins = getAdminRecipients();
+  if (!admins.length) {
+    logger.warn("ADMIN_EMAILS is empty; skip admin notify.");
+    return;
+  }
+  await resend.emails.send({
+    from: FROM,
+    to: admins,
+    subject: payload.subject,
+    html: payload.html,
+    text: payload.text,
+  });
+}
 
 // =====================
 // 共通：HTMLエスケープ
@@ -40,7 +69,7 @@ function fmtJstDateTime(d: Date): string {
 }
 
 // =====================
-// 管理者メッセージ通知
+// ユーザー通知：運営(admin)→ユーザーの新着チャット
 // =====================
 type NewAdminMessageEmailParams = {
   nickname?: string;
@@ -153,7 +182,7 @@ export const notifyUserOnAdminMessage = onDocumentCreated(
 );
 
 // =====================
-// 承認メール（pending -> user）
+// ユーザー通知：承認メール（pending -> user）
 // =====================
 function buildApprovalEmail(params: { nickname?: string }) {
   const name = params.nickname?.trim() ? params.nickname.trim() : "ご登録者さま";
@@ -218,7 +247,7 @@ export const sendApprovalEmailOnRoleChange = onDocumentUpdated(
 );
 
 // =====================
-// メール認証メール（onCall）
+// ユーザー通知：メール認証メール（onCall）
 // =====================
 function buildVerifyEmail(params: { nickname?: string; verifyUrl: string }) {
   const name = params.nickname?.trim() ? params.nickname.trim() : "ご登録者さま";
@@ -310,7 +339,7 @@ export const sendVerificationEmail = onCall(
 );
 
 // =====================
-// 追加①：予定確定メール（schedules作成時）
+// ユーザー通知：予定確定メール（schedules作成時）
 // =====================
 type ScheduleConfirmedEmailParams = {
   nickname?: string;
@@ -394,7 +423,6 @@ export const notifyUserOnScheduleConfirmed = onDocumentCreated(
     const data = event.data?.data() as any;
     if (!data) return;
 
-    // ガード
     if (data.isDeleted === true) return;
     if (data.status !== "confirmed") return;
     if (data.createdBy !== "admin") return;
@@ -421,8 +449,7 @@ export const notifyUserOnScheduleConfirmed = onDocumentCreated(
 
     const endAt: Date | null = current?.endAt?.toDate ? current.endAt.toDate() : null;
 
-    const typeLabel =
-      current?.type === "interview" ? "面接" : current?.type === "trial" ? "体験入店" : "予定";
+    const typeLabel = current?.type === "interview" ? "面接" : current?.type === "trial" ? "体験入店" : "予定";
 
     const resend = new Resend(RESEND_API_KEY.value());
     const { subject, html, text } = buildScheduleConfirmedEmail({
@@ -444,7 +471,7 @@ export const notifyUserOnScheduleConfirmed = onDocumentCreated(
 );
 
 // =====================
-// 追加②：予定日当日メール（毎朝9時JST）
+// ユーザー通知：予定日当日メール（毎朝9時JST）
 // =====================
 type ScheduleReminderEmailParams = {
   nickname?: string;
@@ -520,7 +547,6 @@ export const sendScheduleRemindersDaily = onSchedule(
     const startTs = Timestamp.fromDate(todayStart.toJSDate());
     const endTs = Timestamp.fromDate(todayEnd.toJSDate());
 
-    // isDeleted は「false or 未設定」を想定（運用上は false を必ず入れるのがおすすめ）
     const q = db
       .collection("schedules")
       .where("status", "==", "confirmed")
@@ -564,13 +590,326 @@ export const sendScheduleRemindersDaily = onSchedule(
 
       try {
         await resend.emails.send({ from: FROM, to, subject, html, text });
-
         await docSnap.ref.set({ reminderSentAt: FieldValue.serverTimestamp() }, { merge: true });
-
         logger.info("Schedule reminder sent.", { scheduleId: docSnap.id, to });
       } catch (e: any) {
-        logger.error("Failed to send reminder.", { scheduleId: docSnap.id, to, error: String(e?.message ?? e) });
+        logger.error("Failed to send reminder.", {
+          scheduleId: docSnap.id,
+          to,
+          error: String(e?.message ?? e),
+        });
       }
     }
+  }
+);
+
+// =====================
+// 管理者通知①：承認待ちユーザーが増えた（users作成時 role=pending）
+// =====================
+function buildAdminNewPendingUserEmail(params: { uid: string; nickname?: string; email?: string }) {
+  const subject = "【NAVIÉ】承認待ちユーザーが追加されました";
+  const adminUrl = `https://night-navie.jp/admin/users?status=pending`;
+
+  const name = params.nickname?.trim() ? params.nickname.trim() : "(未設定)";
+  const email = params.email?.trim() ? params.email.trim() : "(未設定)";
+
+  const html = `
+  <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Noto Sans JP','Hiragino Sans','Helvetica Neue',Arial;line-height:1.7;color:#111;">
+    <h2 style="margin:0 0 12px;">承認待ちユーザーが追加されました</h2>
+
+    <div style="margin:0 0 18px; padding:12px 14px; border-radius:12px; background:#f6f7fb; border:1px solid #e5e7f2;">
+      <p style="margin:0; font-size:13px;"><b>UID</b>：${escapeHtml(params.uid)}</p>
+      <p style="margin:6px 0 0; font-size:13px;"><b>nickname</b>：${escapeHtml(name)}</p>
+      <p style="margin:6px 0 0; font-size:13px;"><b>email</b>：${escapeHtml(email)}</p>
+    </div>
+
+    <p style="margin:0 0 24px;">
+      <a href="${adminUrl}"
+         style="display:inline-block;padding:12px 18px;border-radius:10px;background:#111;color:#fff;text-decoration:none;font-weight:600;">
+        管理画面で確認
+      </a>
+    </p>
+  </div>`;
+
+  const text = `NAVIÉ 管理者各位
+
+承認待ちユーザーが追加されました。
+
+UID: ${params.uid}
+nickname: ${name}
+email: ${email}
+
+確認: ${adminUrl}
+`;
+
+  return { subject, html, text };
+}
+
+export const notifyAdminOnNewPendingUser = onDocumentCreated(
+  {
+    document: "users/{uid}",
+    region: "asia-northeast1",
+    secrets: [RESEND_API_KEY, ADMIN_EMAILS],
+  },
+  async (event) => {
+    const after = event.data?.data() as any;
+    if (!after) return;
+
+    if (after.role !== "pending") return;
+
+    const db = getFirestore();
+    const userRef = db.doc(`users/${event.params.uid}`);
+
+    if (after.adminPendingNotifiedAt) return; // 冪等
+
+    const resend = new Resend(RESEND_API_KEY.value());
+    const { subject, html, text } = buildAdminNewPendingUserEmail({
+      uid: event.params.uid,
+      nickname: after.nickname,
+      email: after.email,
+    });
+
+    await sendToAdmins(resend, { subject, html, text });
+
+    await userRef.set({ adminPendingNotifiedAt: FieldValue.serverTimestamp() }, { merge: true });
+
+    logger.info("Admin notified: new pending user", { uid: event.params.uid });
+  }
+);
+
+// =====================
+// 管理者通知②：ユーザーからチャットが来た
+// =====================
+function buildAdminNewUserChatEmail(params: { roomId: string; nickname?: string; textPreview: string }) {
+  const subject = "【NAVIÉ】ユーザーから新しいチャットが届きました";
+  const adminChatUrl = `https://night-navie.jp/admin/chat?roomId=${encodeURIComponent(params.roomId)}`;
+
+  const name = params.nickname?.trim() ? params.nickname.trim() : "（未設定）";
+
+  const html = `
+  <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Noto Sans JP','Hiragino Sans','Helvetica Neue',Arial;line-height:1.7;color:#111;">
+    <h2 style="margin:0 0 12px;">ユーザーからチャットが届きました</h2>
+    <p style="margin:0 0 14px;">送信者：<b>${escapeHtml(name)}</b></p>
+
+    <div style="margin:0 0 18px; padding:12px 14px; border-radius:12px; background:#f6f7fb; border:1px solid #e5e7f2;">
+      <p style="margin:0; font-size:13px; color:#333; white-space:pre-wrap;">${escapeHtml(params.textPreview)}</p>
+    </div>
+
+    <p style="margin:0 0 24px;">
+      <a href="${adminChatUrl}"
+         style="display:inline-block;padding:12px 18px;border-radius:10px;background:#111;color:#fff;text-decoration:none;font-weight:600;">
+        管理チャットを開く
+      </a>
+    </p>
+  </div>`;
+
+  const text = `NAVIÉ 管理者各位
+
+ユーザーから新しいチャットが届きました。
+送信者: ${name}
+
+--- 抜粋 ---
+${params.textPreview}
+-----------
+
+管理チャット: ${adminChatUrl}
+`;
+
+  return { subject, html, text };
+}
+
+export const notifyAdminOnUserMessage = onDocumentCreated(
+  {
+    document: "chatRooms/{roomId}/messages/{messageId}",
+    region: "asia-northeast1",
+    secrets: [RESEND_API_KEY, ADMIN_EMAILS],
+  },
+  async (event) => {
+    const db = getFirestore();
+    const roomId = event.params.roomId;
+    const msg = event.data?.data() as any;
+    if (!msg) return;
+
+    const from = (msg.from ?? msg.sender ?? "user") as string;
+    if (from !== "user") return;
+
+    if (msg.isDeleted === true) return;
+
+    const rawText = String(msg.text ?? "").trim();
+    const hasImage = !!msg.imageUrl;
+    if (!rawText && !hasImage) return;
+
+    const roomRef = db.doc(`chatRooms/${roomId}`);
+    const roomSnap = await roomRef.get();
+    if (!roomSnap.exists) return;
+
+    const room = roomSnap.data() as any;
+
+    // ✅ クールダウン（同ルーム2分に1回）
+    const now = Date.now();
+    const last =
+      typeof room?.lastUserNotifyToAdminAt?.toMillis === "function"
+        ? room.lastUserNotifyToAdminAt.toMillis()
+        : 0;
+    const cooldownMs = 2 * 60 * 1000;
+    if (now - last < cooldownMs) return;
+
+    const userId = room?.userId as string | undefined;
+    if (!userId) return;
+
+    const userSnap = await db.doc(`users/${userId}`).get();
+    const u = userSnap.exists ? (userSnap.data() as any) : null;
+
+    const textPreview =
+      rawText.length > 140 ? rawText.slice(0, 140) + "…" : rawText || (hasImage ? "画像が届きました" : "");
+
+    const resend = new Resend(RESEND_API_KEY.value());
+    const { subject, html, text } = buildAdminNewUserChatEmail({
+      roomId,
+      nickname: u?.nickname,
+      textPreview,
+    });
+
+    await sendToAdmins(resend, { subject, html, text });
+
+    await roomRef.set({ lastUserNotifyToAdminAt: FieldValue.serverTimestamp() }, { merge: true });
+
+    logger.info("Admin notified: user message", { roomId, userId });
+  }
+);
+
+// =====================
+// 管理者通知③：候補日（requests）が提出された（←あなたのUIはこっち）
+// =====================
+function buildAdminRequestSubmittedEmail(params: {
+  requestId: string;
+  nickname?: string;
+  typeLabel: string;
+  candidatesText: string;
+  memo?: string;
+}) {
+  const subject = "【NAVIÉ】候補日が提出されました";
+  const adminUrl = `https://night-navie.jp/admin/requests?focus=${encodeURIComponent(params.requestId)}`;
+
+  const name = params.nickname?.trim() ? params.nickname.trim() : "（未設定）";
+
+  const html = `
+  <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Noto Sans JP','Hiragino Sans','Helvetica Neue',Arial;line-height:1.7;color:#111;">
+    <h2 style="margin:0 0 12px;">候補日が提出されました</h2>
+
+    <div style="margin:0 0 18px; padding:12px 14px; border-radius:12px; background:#f6f7fb; border:1px solid #e5e7f2;">
+      <p style="margin:0; font-size:13px;"><b>提出者</b>：${escapeHtml(name)}</p>
+      <p style="margin:6px 0 0; font-size:13px;"><b>種別</b>：${escapeHtml(params.typeLabel)}</p>
+
+      <div style="margin:10px 0 0; padding:10px 12px; border-radius:10px; background:#fff; border:1px solid #eee;">
+        <p style="margin:0; font-size:12px; color:#333; white-space:pre-wrap;">${escapeHtml(params.candidatesText)}</p>
+      </div>
+
+      ${
+        params.memo?.trim()
+          ? `<p style="margin:10px 0 0; font-size:12px; color:#555; white-space:pre-wrap;"><b>メモ</b>\n${escapeHtml(
+              params.memo
+            )}</p>`
+          : ""
+      }
+
+      <p style="margin:10px 0 0; font-size:12px; color:#666;"><b>ID</b>：${escapeHtml(params.requestId)}</p>
+    </div>
+
+    <p style="margin:0 0 24px;">
+      <a href="${adminUrl}"
+         style="display:inline-block;padding:12px 18px;border-radius:10px;background:#111;color:#fff;text-decoration:none;font-weight:600;">
+        管理画面で確認
+      </a>
+    </p>
+  </div>`;
+
+  const text = `NAVIÉ 管理者各位
+
+候補日が提出されました。
+
+提出者: ${name}
+種別: ${params.typeLabel}
+
+${params.candidatesText}
+
+${params.memo?.trim() ? `メモ:\n${params.memo}\n\n` : ""}ID: ${params.requestId}
+確認: ${adminUrl}
+`;
+
+  return { subject, html, text };
+}
+
+export const notifyAdminOnRequestSubmitted = onDocumentCreated(
+  {
+    document: "requests/{requestId}",
+    region: "asia-northeast1",
+    secrets: [RESEND_API_KEY, ADMIN_EMAILS],
+  },
+  async (event) => {
+    const db = getFirestore();
+    const requestId = event.params.requestId;
+    const data = event.data?.data() as any;
+    if (!data) return;
+
+    // あなたのUIは addDoc で status:"open" を入れてる
+    if (data.status !== "open") return;
+    if (data.isDeleted === true) return;
+
+    // 冪等
+    if (data.adminNotifiedAt) return;
+
+    const userId = data.userId as string | undefined;
+    if (!userId) return;
+
+    // 同一ユーザー連投ガード（2分）
+    const userRef = db.doc(`users/${userId}`);
+    const userSnap = await userRef.get();
+    const u = userSnap.exists ? (userSnap.data() as any) : null;
+
+    const now = Date.now();
+    const last =
+      typeof u?.lastRequestNotifyToAdminAt?.toMillis === "function" ? u.lastRequestNotifyToAdminAt.toMillis() : 0;
+    const cooldownMs = 2 * 60 * 1000;
+    if (now - last < cooldownMs) return;
+
+    const nickname = u?.nickname;
+
+    // candidates を整形
+    const candidatesArr = Array.isArray(data.candidates) ? data.candidates : [];
+    const lines: string[] = [];
+    for (let i = 0; i < Math.min(candidatesArr.length, 3); i++) {
+      const c = candidatesArr[i];
+      const start = c?.startAt?.toDate ? c.startAt.toDate() : null;
+      const end = c?.endAt?.toDate ? c.endAt.toDate() : null;
+      const note = String(c?.note ?? "").trim();
+      if (!start) continue;
+
+      lines.push(
+        `・${fmtJstDateTime(start)}${end ? ` 〜 ${fmtJstDateTime(end)}` : ""}${note ? `（${note}）` : ""}`
+      );
+    }
+    const candidatesText = lines.length ? lines.join("\n") : "（候補日の取得に失敗）";
+
+    const typeLabel = data.type === "interview" ? "面接" : data.type === "trial" ? "体験入店" : "その他";
+
+    const resend = new Resend(RESEND_API_KEY.value());
+    const { subject, html, text } = buildAdminRequestSubmittedEmail({
+      requestId,
+      nickname,
+      typeLabel,
+      candidatesText,
+      memo: String(data.memo ?? ""),
+    });
+
+    await sendToAdmins(resend, { subject, html, text });
+
+    // 送信済み印（request側）
+    await db.doc(`requests/${requestId}`).set({ adminNotifiedAt: FieldValue.serverTimestamp() }, { merge: true });
+
+    // クールダウン印（user側）
+    await userRef.set({ lastRequestNotifyToAdminAt: FieldValue.serverTimestamp() }, { merge: true });
+
+    logger.info("Admin notified: request submitted", { requestId, userId });
   }
 );

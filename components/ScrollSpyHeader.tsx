@@ -132,9 +132,6 @@ export default function ScrollSpyHeader() {
 
           {/* ✅ Desktop/Tablet: 相談する + 無料ではじめる（従来通り） */}
           <div className="hidden sm:flex items-center gap-3">
-            <NavieButton href="/chat" variant="secondary">
-              相談する
-            </NavieButton>
             <NavieButton href="#cta">無料ではじめる</NavieButton>
           </div>
         </div>
