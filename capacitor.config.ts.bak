@@ -1,0 +1,18 @@
+import type { CapacitorConfig } from "@capacitor/cli";
+
+const config: CapacitorConfig = {
+  appId: "jp.nightnavie.app",
+  appName: "NAVIE",
+  webDir: "dist",
+  server: {
+    url: "https://night-navie.jp",
+    cleartext: false,
+  },
+  // ✅ WebView内での遷移を許可するドメイン
+  allowNavigation: [
+    "night-navie.jp",
+    "*.night-navie.jp",
+  ],
+};
+
+export default config;

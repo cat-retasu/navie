@@ -1,0 +1,14 @@
+{
+  "appId": "jp.nightnavie.app",
+  "appName": "NAVIE",
+  "webDir": "dist",
+  "server": {
+    "url": "https://www.night-navie.jp",
+    "cleartext": false
+  },
+  "allowNavigation": [
+    "www.night-navie.jp",
+    "night-navie.jp",
+    "*.night-navie.jp"
+  ]
+}

@@ -88,16 +88,13 @@ export default function ScrollSpyHeader() {
   };
 
   return (
-    <header
-      className={[
-        // ✅ ここが本命：safe-area分だけ上に余白
-        "pt-[env(safe-area-inset-top)]",
-        // sticky で上に貼り付く
-        "sticky top-0 z-40",
-        "border-b border-[rgba(15,15,18,0.10)]",
-        "bg-white/92 backdrop-blur-xl",
-      ].join(" ")}
-    >
+    <header className={[
+  "pt-[max(env(safe-area-inset-top),12px)]",
+  "sticky top-0 z-40",
+  "border-b border-[rgba(15,15,18,0.10)]",
+  "bg-white/92 backdrop-blur-xl",
+].join(" ")}>
+
       {/* progress bar */}
       <div className="h-[2px] w-full bg-transparent">
         <div
