@@ -27,6 +27,13 @@
   --cta-pink: #ff3b7a;
   --cta-pink-hi: #ff5b8d;
   --cta-pink-lo: #ff2f72;
+
+  /* ✅ iOS Safe Area（ノッチ / Dynamic Island） */
+  --safe-top: env(safe-area-inset-top);
+  --safe-bottom: env(safe-area-inset-bottom);
+
+  /* ✅ ヘッダーの“見た目の高さ”(Tailwindでh-14=56px想定) */
+  --navie-header-h: 56px;
 }
 
 html {
@@ -38,6 +45,23 @@ body {
   color: var(--ink);
   font-family: var(--font-sans), ui-sans-serif, system-ui, -apple-system, "Segoe UI",
     "Hiragino Sans", "Noto Sans JP", sans-serif;
+
+  /* ✅ 下ホームバー対策（必要なら効く） */
+  padding-bottom: var(--safe-bottom);
+}
+
+/* =========================
+   ✅ iOS WKWebView セーフエリア対策（ここが本命）
+========================= */
+
+/* ヘッダーが固定（fixed/sticky）でもノッチに被らない */
+.navie-safe-header {
+  padding-top: var(--safe-top);
+}
+
+/* ヘッダーが fixed の場合：中身が潜らないように押し下げる */
+.navie-safe-main {
+  padding-top: calc(var(--safe-top) + var(--navie-header-h));
 }
 
 /* =========================
@@ -110,20 +134,14 @@ body {
 
 /* =========================
    CTA pink surface（形だけで“デザイン感”を出す版）
-   - 色は現状のまま
-   - 外：ノッチ（切り欠き）
-   - 内：ヘッダー帯 + インセット枠（段差）
+   （あなたの既存そのまま）
 ========================= */
 
 /* 外側ピンク面：ノッチ付きパネル */
 .ctaPinkSurface {
   position: relative;
   overflow: hidden;
-
-  /* 角丸は少し大きめにして“特別感” */
   border-radius: 44px;
-
-  /* ✅ 形：右下にノッチ（切り欠き） */
   clip-path: polygon(
     0% 0%,
     100% 0%,
@@ -133,7 +151,6 @@ body {
   );
 }
 
-/* 既存の色設計はbeforeに保持（色は変えない） */
 .ctaPinkSurface::before {
   content: "";
   position: absolute;
@@ -148,7 +165,6 @@ body {
     radial-gradient(880px 540px at 80% 36%, rgba(0, 0, 0, 0.10), transparent 66%);
 }
 
-/* ✅ 形の情報を足す：薄い“縁”と艶（色味は白/黒の透明のみ） */
 .ctaPinkSurface::after {
   content: "";
   position: absolute;
@@ -163,41 +179,32 @@ body {
 
 .ctaPinkSurface > * { position: relative; z-index: 1; }
 
-/* 内側（白ガラス）：段差＆ヘッダー帯 */
 .ctaPinkInner {
   position: relative;
   border-radius: 34px;
   background: rgba(255, 255, 255, 0.90);
   border: 1px solid rgba(255, 255, 255, 0.32);
-
-  /* ✅ 帯の分だけ確保（22→18で“上寄り”感を減らす） */
   padding-top: 18px;
-
   box-shadow:
     0 18px 60px rgba(18,18,24,0.14),
     inset 0 0 0 1px rgba(255,255,255,0.55),
     inset 0 0 0 10px rgba(255,255,255,0.20);
-
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
 }
 
-/* ✅ ヘッダー帯：でかい＆上すぎ → 小さく・少し下げ・幅も絞る */
 .ctaPinkInner::before {
   content: "";
   position: absolute;
-
-  top: 22px;               /* 16→22：少し下げる */
-  height: 44px;            /* 56→44：細くする */
-
+  top: 22px;
+  height: 44px;
   left: 50%;
   transform: translateX(-50%);
-  width: min(560px, calc(100% - 96px)); /* ✅ 横いっぱいをやめる */
-
+  width: min(560px, calc(100% - 96px));
   border-radius: 999px;
   background: rgba(255,255,255,0.48);
   border: 1px solid rgba(0,0,0,0.05);
-  box-shadow: 0 8px 20px rgba(18,18,24,0.05); /* 影も軽く */
+  box-shadow: 0 8px 20px rgba(18,18,24,0.05);
   pointer-events: none;
 }
 

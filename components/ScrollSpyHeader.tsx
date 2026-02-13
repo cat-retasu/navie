@@ -1,5 +1,4 @@
 // components/ScrollSpyHeader.tsx
-
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -27,8 +26,15 @@ export default function ScrollSpyHeader() {
   const barRef = useRef<HTMLDivElement | null>(null);
   const rafRef = useRef<number | null>(null);
 
+  // ✅ iOS notch / Dynamic Island 対策：safe-area(top) をJSでも取得して offset に加える
+  const getSafeTop = () => {
+    // env(safe-area-inset-top) が効かない環境では 0
+    const v = getComputedStyle(document.documentElement).getPropertyValue("--safe-top").trim();
+    const n = Number(v.replace("px", ""));
+    return Number.isFinite(n) ? n : 0;
+  };
+
   useEffect(() => {
-    const headerOffset = 110;
     const sections = links
       .map((l) => document.getElementById(l.id))
       .filter(Boolean) as HTMLElement[];
@@ -38,6 +44,11 @@ export default function ScrollSpyHeader() {
       const max = doc.scrollHeight - doc.clientHeight || 1;
       const p = Math.min(1, Math.max(0, doc.scrollTop / max));
       if (barRef.current) barRef.current.style.width = `${p * 100}%`;
+
+      // ✅ ヘッダーの実高さ + safeTop ぶんを考慮して、アクティブ判定がズレないようにする
+      const safeTop = getSafeTop();
+      const headerBase = 96; // だいたい：上段 + 進捗バー + 下段チップ込み（sm未満）
+      const headerOffset = headerBase + safeTop;
 
       let currentId = links[0]!.id;
       for (const el of sections) {
@@ -68,11 +79,25 @@ export default function ScrollSpyHeader() {
   const goTo = (id: string) => {
     const el = document.getElementById(id);
     if (!el) return;
-    el.scrollIntoView({ behavior: "smooth", block: "start" });
+
+    // ✅ scrollIntoViewだけだとヘッダーに潜ることがあるので、少し上に余裕を持たせる
+    const safeTop = typeof window !== "undefined" ? getSafeTop() : 0;
+    const headerBase = 96;
+    const y = el.getBoundingClientRect().top + window.scrollY - (headerBase + safeTop + 8);
+    window.scrollTo({ top: y, behavior: "smooth" });
   };
 
   return (
-    <header className="sticky top-0 z-40 border-b border-[rgba(15,15,18,0.10)] bg-white/92 backdrop-blur-xl">
+    <header
+      className={[
+        // ✅ ここが本命：safe-area分だけ上に余白
+        "pt-[env(safe-area-inset-top)]",
+        // sticky で上に貼り付く
+        "sticky top-0 z-40",
+        "border-b border-[rgba(15,15,18,0.10)]",
+        "bg-white/92 backdrop-blur-xl",
+      ].join(" ")}
+    >
       {/* progress bar */}
       <div className="h-[2px] w-full bg-transparent">
         <div
@@ -123,21 +148,18 @@ export default function ScrollSpyHeader() {
         {/* Actions */}
         <div className="flex items-center gap-2 shrink-0">
           {/* ✅ Mobile: CTAは1個だけ（開始/目次ボタンは置かない） */}
-          <NavieButton
-            href="#cta"
-            className="sm:hidden h-[40px] px-4 text-[12px] whitespace-nowrap"
-          >
+          <NavieButton href="#cta" className="sm:hidden h-[40px] px-4 text-[12px] whitespace-nowrap">
             無料ではじめる
           </NavieButton>
 
-          {/* ✅ Desktop/Tablet: 相談する + 無料ではじめる（従来通り） */}
+          {/* ✅ Desktop/Tablet: 無料ではじめる */}
           <div className="hidden sm:flex items-center gap-3">
             <NavieButton href="#cta">無料ではじめる</NavieButton>
           </div>
         </div>
       </div>
 
-      {/* ✅ Mobile: 下段チップ（これが“目次”の代わり。ボタンの「目次」は不要） */}
+      {/* ✅ Mobile: 下段チップ */}
       <div className="sm:hidden px-4 pb-3">
         <div className="relative">
           <div
