@@ -3,23 +3,10 @@
 
 import { useAuth } from "@/components/AuthProvider";
 import { useRouter, usePathname } from "next/navigation";
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { getDbClient } from "@/lib/firebase";
 import Link from "next/link";
-import {
-  collectionGroup,
-  onSnapshot,
-  query,
-  where,
-  doc,
-  getDoc,
-} from "firebase/firestore";
+import { collectionGroup, onSnapshot, query, where, doc, getDoc } from "firebase/firestore";
 import { NightNaviBg } from "@/components/NightNaviBg";
 
 type NavItem = {
@@ -45,11 +32,7 @@ export function useAdminUnread() {
   return useContext(AdminUnreadContext);
 }
 
-export default function AdminLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const { user, loading, logout } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
@@ -70,7 +53,6 @@ export default function AdminLayout({
     const ensureAdmin = async () => {
       const db = getDbClient();
       if (!db) {
-        // SSR/prerender ではここに来ない想定だけど安全策
         setCheckingRole(false);
         router.replace("/mypage");
         return;
@@ -174,7 +156,7 @@ export default function AdminLayout({
   );
 }
 
-/** ✅ 追加：モバイル対応シェル */
+/** ✅ モバイル対応シェル */
 function MobileAdminShell({
   children,
   navItems,
@@ -190,10 +172,13 @@ function MobileAdminShell({
 }) {
   const [open, setOpen] = useState(false);
 
+  // ✅ トップバーの高さ（px）。見た目がズレるなら 56→60/64 で微調整OK
+  const TOPBAR_H = 56;
+
   return (
     <div className="min-h-screen">
-      {/* ✅ モバイルトップバー（md未満） */}
-      <div className="md:hidden sticky top-0 z-30 w-full border-b border-white/10 bg-[#050007]/70 backdrop-blur-xl">
+      {/* ✅ モバイルトップバー（md未満）: safe-area 分だけ上に余白 */}
+      <div className="md:hidden sticky top-0 z-30 w-full pt-[env(safe-area-inset-top)] border-b border-white/10 bg-[#050007]/70 backdrop-blur-xl">
         <div className="flex items-center justify-between px-4 py-3">
           <button
             type="button"
@@ -230,11 +215,10 @@ function MobileAdminShell({
             onClick={() => setOpen(false)}
             className="absolute inset-0 bg-black/60"
           />
-          <div className="absolute left-0 top-0 h-full w-[84%] max-w-[320px] border-r border-white/10 bg-[#050007]/92 backdrop-blur-xl">
+          {/* ✅ safe-area 分だけ上に余白 */}
+          <div className="absolute left-0 top-0 h-full w-[84%] max-w-[320px] pt-[env(safe-area-inset-top)] border-r border-white/10 bg-[#050007]/92 backdrop-blur-xl">
             <div className="px-5 pt-6 pb-4 border-b border-white/10">
-              <p className="text-[11px] tracking-[0.28em] text-pink-300/80">
-                ADMIN
-              </p>
+              <p className="text-[11px] tracking-[0.28em] text-pink-300/80">ADMIN</p>
               <div className="mt-1 flex items-center justify-between">
                 <h1 className="text-base font-semibold">夜ナビ 管理</h1>
                 <button
@@ -297,9 +281,7 @@ function MobileAdminShell({
       <div className="min-h-screen flex flex-col md:flex-row">
         <aside className="hidden md:flex w-[260px] flex-col border-r border-white/10 bg-white/[0.03] backdrop-blur-xl">
           <div className="px-5 pt-6 pb-4 border-b border-white/10">
-            <p className="text-[11px] tracking-[0.28em] text-pink-300/80">
-              ADMIN
-            </p>
+            <p className="text-[11px] tracking-[0.28em] text-pink-300/80">ADMIN</p>
             <h1 className="mt-1 text-lg font-semibold">夜ナビ 管理</h1>
             <p className="mt-1 text-xs text-gray-300">対応を最短で回す用</p>
           </div>
@@ -344,8 +326,10 @@ function MobileAdminShell({
           </div>
         </aside>
 
-        <main className="flex-1 min-w-0 pt-0 md:pt-0">
-          <div className="md:hidden h-0" />
+        {/* ✅ モバイルだけ、safe-area + topbar分押し下げて “めり込み” 防止 */}
+        <main className="flex-1 min-w-0 pt-[calc(env(safe-area-inset-top)+56px)] md:pt-0">
+          {/* TOPBAR_H を使いたいけど Tailwindの calc に変数は直接入れにくいので 56px 固定。
+              もしズレたら上の 56px を TOPBAR_H と同じ値に手動で合わせてOK */}
           {children}
         </main>
       </div>
