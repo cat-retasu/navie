@@ -1,5 +1,4 @@
 /* app/globals.css */
-
 @import "tailwindcss";
 
 /* =========================
@@ -28,16 +27,37 @@
   --cta-pink-hi: #ff5b8d;
   --cta-pink-lo: #ff2f72;
 
-  /* ✅ iOS Safe Area（ノッチ / Dynamic Island） */
-  --safe-top: env(safe-area-inset-top);
-  --safe-bottom: env(safe-area-inset-bottom);
+  /* =========================
+     ✅ iOS Safe Area（ノッチ / Dynamic Island）
+     - env() が 0 になるWKWebView対策で、後から上書きできる設計にする
+  ========================= */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
 
-  /* ✅ ヘッダーの“見た目の高さ”(Tailwindでh-14=56px想定) */
+  /* ✅ ヘッダーの“見た目の高さ” */
   --navie-header-h: 56px;
 }
 
 html {
   scroll-behavior: smooth;
+}
+
+/* ✅ iOSのviewportズレ対策（Capacitor/WebViewで効く） */
+html,
+body {
+  height: 100%;
+}
+
+/* iOS Safari / WebView の新しいviewport単位が使える環境はそっち優先 */
+@supports (height: 100dvh) {
+  body {
+    min-height: 100dvh;
+  }
+}
+@supports (height: 100svh) {
+  body {
+    min-height: 100svh;
+  }
 }
 
 body {
@@ -46,12 +66,17 @@ body {
   font-family: var(--font-sans), ui-sans-serif, system-ui, -apple-system, "Segoe UI",
     "Hiragino Sans", "Noto Sans JP", sans-serif;
 
-  /* ✅ 下ホームバー対策（必要なら効く） */
+  /* ✅ 下ホームバー対策 */
   padding-bottom: var(--safe-bottom);
+
+  /* ✅ iOSのスクロール挙動を安定 */
+  -webkit-text-size-adjust: 100%;
 }
 
 /* =========================
    ✅ iOS WKWebView セーフエリア対策（ここが本命）
+   - env() が死んでも var(--safe-top) を使うのでOK
+   - さらに JS で :root の --safe-top を px で上書きできる余地を残す
 ========================= */
 
 /* ヘッダーが固定（fixed/sticky）でもノッチに被らない */
@@ -59,9 +84,16 @@ body {
   padding-top: var(--safe-top);
 }
 
-/* ヘッダーが fixed の場合：中身が潜らないように押し下げる */
+/* ヘッダーが fixed/sticky の場合：中身が潜らないように押し下げる */
 .navie-safe-main {
   padding-top: calc(var(--safe-top) + var(--navie-header-h));
+}
+
+/* ✅ safe-area を使うページで “トップにめり込む” の最終保険
+   - これがあると、body直下に固定ヘッダーがいても崩れにくい */
+.navie-safe-root {
+  padding-top: var(--safe-top);
+  padding-bottom: var(--safe-bottom);
 }
 
 /* =========================
@@ -216,3 +248,4 @@ body {
   .navie-light-sweep, .navie-grain { animation: none !important; }
   .navie-reveal { transition: none !important; opacity: 1 !important; }
 }
+

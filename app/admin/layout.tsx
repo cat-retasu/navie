@@ -156,7 +156,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   );
 }
 
-/** ✅ モバイル対応シェル */
+/** ✅ モバイル対応シェル（safe-area強め版） */
 function MobileAdminShell({
   children,
   navItems,
@@ -172,13 +172,23 @@ function MobileAdminShell({
 }) {
   const [open, setOpen] = useState(false);
 
-  // ✅ トップバーの高さ（px）。見た目がズレるなら 56→60/64 で微調整OK
+  // ✅ トップバーの高さ（px）。ズレるならここを 60/64 と、
+  // mainの calc の 56px を同じ値にするだけでOK
   const TOPBAR_H = 56;
 
   return (
     <div className="min-h-screen">
-      {/* ✅ モバイルトップバー（md未満）: safe-area 分だけ上に余白 */}
-      <div className="md:hidden sticky top-0 z-30 w-full pt-[env(safe-area-inset-top)] border-b border-white/10 bg-[#050007]/70 backdrop-blur-xl">
+      {/* ✅ モバイルトップバー（md未満）
+          env() が0になるWKWebView対策で、CSS変数(--safe-top)も併用 */}
+      <div
+        className={[
+          "md:hidden sticky top-0 z-30 w-full border-b border-white/10 bg-[#050007]/70 backdrop-blur-xl",
+          // ①通常ブラウザ向け
+          "pt-[env(safe-area-inset-top)]",
+          // ②アプリ(WKWebView)向け：globals.css の --safe-top を当てる
+          "navie-safe-header",
+        ].join(" ")}
+      >
         <div className="flex items-center justify-between px-4 py-3">
           <button
             type="button"
@@ -215,8 +225,13 @@ function MobileAdminShell({
             onClick={() => setOpen(false)}
             className="absolute inset-0 bg-black/60"
           />
-          {/* ✅ safe-area 分だけ上に余白 */}
-          <div className="absolute left-0 top-0 h-full w-[84%] max-w-[320px] pt-[env(safe-area-inset-top)] border-r border-white/10 bg-[#050007]/92 backdrop-blur-xl">
+          <div
+            className={[
+              "absolute left-0 top-0 h-full w-[84%] max-w-[320px] border-r border-white/10 bg-[#050007]/92 backdrop-blur-xl",
+              "pt-[env(safe-area-inset-top)]",
+              "navie-safe-header",
+            ].join(" ")}
+          >
             <div className="px-5 pt-6 pb-4 border-b border-white/10">
               <p className="text-[11px] tracking-[0.28em] text-pink-300/80">ADMIN</p>
               <div className="mt-1 flex items-center justify-between">
@@ -326,10 +341,13 @@ function MobileAdminShell({
           </div>
         </aside>
 
-        {/* ✅ モバイルだけ、safe-area + topbar分押し下げて “めり込み” 防止 */}
-        <main className="flex-1 min-w-0 pt-[calc(env(safe-area-inset-top)+56px)] md:pt-0">
-          {/* TOPBAR_H を使いたいけど Tailwindの calc に変数は直接入れにくいので 56px 固定。
-              もしズレたら上の 56px を TOPBAR_H と同じ値に手動で合わせてOK */}
+        {/* ✅ モバイルだけ、safe-area + topbar分押し下げ（envが0でも --safe-top で効く） */}
+        <main
+          className="flex-1 min-w-0 md:pt-0"
+          style={{
+            paddingTop: `calc(var(--safe-top, env(safe-area-inset-top)) + ${TOPBAR_H}px)`,
+          }}
+        >
           {children}
         </main>
       </div>
