@@ -10,5 +10,12 @@
     "www.night-navie.jp",
     "night-navie.jp",
     "*.night-navie.jp"
-  ]
+  ],
+  "plugins": {
+    "StatusBar": {
+      "overlaysWebView": false,
+      "style": "DARK",
+      "backgroundColor": "#050007"
+    }
+  }
 }

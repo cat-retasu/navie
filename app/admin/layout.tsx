@@ -8,6 +8,7 @@ import { getDbClient } from "@/lib/firebase";
 import Link from "next/link";
 import { collectionGroup, onSnapshot, query, where, doc, getDoc } from "firebase/firestore";
 import { NightNaviBg } from "@/components/NightNaviBg";
+import type { Viewport } from "next";
 
 type NavItem = {
   href: string;
@@ -31,6 +32,12 @@ const AdminUnreadContext = createContext<AdminUnreadContextValue>({
 export function useAdminUnread() {
   return useContext(AdminUnreadContext);
 }
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+};
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const { user, loading, logout } = useAuth();
