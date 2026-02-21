@@ -433,9 +433,6 @@ export default function LoginPage() {
                 className="flex flex-wrap items-center justify-between gap-2 text-[11px]"
                 style={{ color: "rgba(95,96,107,0.95)" }}
               >
-                <Link href="/" className="hover:opacity-80">
-                  トップへ戻る
-                </Link>
 
                 <div className="flex items-center gap-3">
                   <Link href="/terms" className="hover:opacity-80 underline underline-offset-2">

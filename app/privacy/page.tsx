@@ -30,10 +30,10 @@ export default function PrivacyPolicyPage() {
           </div>
 
           <Link
-            href="/"
+            href="/login"
             className="shrink-0 rounded-full border border-[rgba(15,15,18,0.10)] bg-white/70 px-4 py-2 text-[12px] font-semibold text-[rgba(15,15,18,0.88)] hover:bg-white"
           >
-            トップへ
+            ログインへ
           </Link>
         </div>
 
