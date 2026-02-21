@@ -262,3 +262,20 @@ body {
   .navie-light-sweep, .navie-grain { animation: none !important; }
   .navie-reveal { transition: none !important; opacity: 1 !important; }
 }
+
+/* =========================
+   ✅ iOS: 入力フォーカス時の自動ズーム防止
+   - iOS Safari/WKWebView は input の font-size が 16px 未満だとズームする
+========================= */
+input,
+textarea,
+select {
+  font-size: 16px;
+}
+
+/* もしshadcn等で見た目を小さくしたい場合は、見た目だけ縮める用（任意）
+   例：.input-sm を付けた時だけ小さく見せる（ズームはしない） */
+.input-sm {
+  transform: scale(0.95);
+  transform-origin: left center;
+}
