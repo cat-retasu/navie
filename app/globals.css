@@ -46,6 +46,17 @@ html {
 html,
 body {
   height: 100%;
+
+  /* ✅ 全ページ「右はみ出し」止血（iOS WebViewで特に効く） */
+  overflow-x: clip;
+}
+
+/* clip 未対応ブラウザ向けフォールバック */
+@supports not (overflow-x: clip) {
+  html,
+  body {
+    overflow-x: hidden;
+  }
 }
 
 /* iOS Safari / WebView の新しいviewport単位が使える環境はそっち優先 */
@@ -71,6 +82,9 @@ body {
 
   /* ✅ iOSのスクロール挙動を安定 */
   -webkit-text-size-adjust: 100%;
+
+  /* ✅ ブラー/フィルタ描画が横スクを生むのを更に抑える（保険） */
+  position: relative;
 }
 
 /* =========================
@@ -248,4 +262,3 @@ body {
   .navie-light-sweep, .navie-grain { animation: none !important; }
   .navie-reveal { transition: none !important; opacity: 1 !important; }
 }
-
