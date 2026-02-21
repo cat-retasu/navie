@@ -20,7 +20,7 @@ import {
   getCountFromServer,
 } from "firebase/firestore";
 
-import { useAdminUnread } from "./layout"; // ✅ 追加：layout から未読総数を参照
+import { useAdminUnread } from "./admin-unread-context";
 
 type PendingUser = {
   id: string;

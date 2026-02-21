@@ -1,9 +1,8 @@
-// app/admin/layout.client.tsx
 "use client";
 
 import { useAuth } from "@/components/AuthProvider";
 import { useRouter, usePathname } from "next/navigation";
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { getDbClient } from "@/lib/firebase";
 import Link from "next/link";
 import {
@@ -15,6 +14,7 @@ import {
   getDoc,
 } from "firebase/firestore";
 import { NightNaviBg } from "@/components/NightNaviBg";
+import { AdminUnreadContext } from "./admin-unread-context";
 
 type NavItem = {
   href: string;
@@ -24,19 +24,6 @@ type NavItem = {
 
 function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
-}
-
-/** ✅ 未読総数を admin 配下に配る Context */
-type AdminUnreadContextValue = {
-  unreadTotal: number;
-};
-
-const AdminUnreadContext = createContext<AdminUnreadContextValue>({
-  unreadTotal: 0,
-});
-
-export function useAdminUnread() {
-  return useContext(AdminUnreadContext);
 }
 
 export default function AdminLayoutClient({
