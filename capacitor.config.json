@@ -3,7 +3,7 @@
   "appName": "NAVIE",
   "webDir": "dist",
   "server": {
-    "url": "https://www.night-navie.jp",
+    "url": "https://www.night-navie.jp/login",
     "cleartext": false
   },
   "allowNavigation": [

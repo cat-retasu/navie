@@ -36,7 +36,7 @@ export default function LoginPage() {
   const router = useRouter();
   const { user, userData, loading, login, signup } = useAuth();
 
-  const [mode, setMode] = useState<Mode>("login");
+  const [mode, setMode] = useState<Mode>("signup");
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -220,48 +220,46 @@ export default function LoginPage() {
               </p>
             </header>
 
-            {/* タブ */}
             {/* タブ（左右逆：左=新規登録 / 右=ログイン） */}
-<div className="mb-4 rounded-[20px] border border-black/10 bg-white/70 backdrop-blur-[12px] p-1 shadow-[0_14px_50px_rgba(18,18,24,0.10)]">
-  <div className="grid grid-cols-2 gap-2">
-    {/* 左：新規登録 */}
-    <button
-      type="button"
-      onClick={() => {
-        setMode("signup");
-        setError(null);
-      }}
-      className={cx(
-        "rounded-[16px] px-3 py-2 text-[13px] font-semibold transition",
-        mode === "signup"
-          ? "bg-white shadow-[0_10px_26px_rgba(18,18,24,0.10)] border border-black/10"
-          : "hover:bg-white/40"
-      )}
-      style={{ color: mode === "signup" ? "#0f0f12" : "var(--muted)" }}
-    >
-      新規登録
-    </button>
+            <div className="mb-4 rounded-[20px] border border-black/10 bg-white/70 backdrop-blur-[12px] p-1 shadow-[0_14px_50px_rgba(18,18,24,0.10)]">
+              <div className="grid grid-cols-2 gap-2">
+                {/* 左：新規登録 */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode("signup");
+                    setError(null);
+                  }}
+                  className={cx(
+                    "rounded-[16px] px-3 py-2 text-[13px] font-semibold transition",
+                    mode === "signup"
+                      ? "bg-white shadow-[0_10px_26px_rgba(18,18,24,0.10)] border border-black/10"
+                      : "hover:bg-white/40"
+                  )}
+                  style={{ color: mode === "signup" ? "#0f0f12" : "var(--muted)" }}
+                >
+                  新規登録
+                </button>
 
-    {/* 右：ログイン */}
-    <button
-      type="button"
-      onClick={() => {
-        setMode("login");
-        setError(null);
-      }}
-      className={cx(
-        "rounded-[16px] px-3 py-2 text-[13px] font-semibold transition",
-        mode === "login"
-          ? "bg-white shadow-[0_10px_26px_rgba(18,18,24,0.10)] border border-black/10"
-          : "hover:bg-white/40"
-      )}
-      style={{ color: mode === "login" ? "#0f0f12" : "var(--muted)" }}
-    >
-      ログイン
-    </button>
-  </div>
-</div>
-
+                {/* 右：ログイン */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode("login");
+                    setError(null);
+                  }}
+                  className={cx(
+                    "rounded-[16px] px-3 py-2 text-[13px] font-semibold transition",
+                    mode === "login"
+                      ? "bg-white shadow-[0_10px_26px_rgba(18,18,24,0.10)] border border-black/10"
+                      : "hover:bg-white/40"
+                  )}
+                  style={{ color: mode === "login" ? "#0f0f12" : "var(--muted)" }}
+                >
+                  ログイン
+                </button>
+              </div>
+            </div>
 
             {/* メインカード */}
             <section className="nomi-card px-5 py-6 md:px-7 md:py-7 space-y-5">
@@ -432,17 +430,35 @@ export default function LoginPage() {
 
               {/* Links */}
               <div
-                className="flex items-center justify-between text-[11px]"
+                className="flex flex-wrap items-center justify-between gap-2 text-[11px]"
                 style={{ color: "rgba(95,96,107,0.95)" }}
               >
                 <Link href="/" className="hover:opacity-80">
                   トップへ戻る
                 </Link>
+
+                <div className="flex items-center gap-3">
+                  <Link href="/terms" className="hover:opacity-80 underline underline-offset-2">
+                    利用規約
+                  </Link>
+                  <Link href="/privacy" className="hover:opacity-80 underline underline-offset-2">
+                    プライバシー
+                  </Link>
+                </div>
               </div>
             </section>
 
+            {/* ✅ 同意文（リンク付き） */}
             <p className="mt-4 text-[10px] leading-relaxed" style={{ color: "rgba(95,96,107,0.85)" }}>
-              続行すると、NAVIÉの利用規約・プライバシーポリシーに同意したものとみなします。
+              続行すると、NAVIÉの{" "}
+              <Link href="/terms" className="underline underline-offset-2 hover:opacity-80">
+                利用規約
+              </Link>
+              ・
+              <Link href="/privacy" className="underline underline-offset-2 hover:opacity-80">
+                プライバシーポリシー
+              </Link>
+              に同意したものとみなします。
             </p>
           </div>
         </div>
